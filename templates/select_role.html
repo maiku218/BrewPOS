@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Select Role</title>
+    <style>
+        :root {
+            --accent: #b45309; --accent-dark: #92400e; --accent-light: #f59e0b;
+            --bg: #1c1917; --surface: #292524; --border: #44403c;
+            --text: #fafaf9; --muted: #a8a29e; --success: #16a34a; --danger: #dc2626;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #1c1917 0%, #292524 50%, #3f2e22 100%);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            color: var(--text); position: relative; overflow: hidden;
+        }
+        body::before {
+            content: ''; position: absolute; inset: 0;
+            background: radial-gradient(circle at 20% 80%, rgba(180,83,9,.15), transparent 50%),
+                        radial-gradient(circle at 80% 20%, rgba(245,158,11,.1), transparent 50%);
+            pointer-events: none;
+        }
+        .container { position: relative; z-index: 1; text-align: center; width: 100%; max-width: 520px; padding: 20px; }
+        .logo { width: 80px; height: 80px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 40px; box-shadow: 0 8px 24px rgba(180,83,9,.3); }
+        .brand { font-size: 36px; font-weight: 900; letter-spacing: -1px; color: var(--text); }
+        .brand span { color: var(--accent-light); }
+        .subtitle { color: var(--muted); margin: 8px 0 36px; font-size: 15px; font-weight: 500; }
+        .user-info { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; margin-bottom: 28px; display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+        .user-info strong { color: var(--text); }
+        .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 20px; }
+        .card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+            padding: 32px 20px; cursor: pointer; transition: all .2s; text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,.2);
+        }
+        .card:hover { transform: translateY(-4px); border-color: var(--accent); box-shadow: 0 8px 24px rgba(180,83,9,.2); }
+        .card-icon { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto 14px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+        .card-icon.admin { background: linear-gradient(135deg, #7c2d12, #b45309); }
+        .card-icon.cashier { background: linear-gradient(135deg, #1c1917, #44403c); }
+        .card-title { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+        .card-sub { font-size: 13px; color: var(--muted); line-height: 1.4; }
+
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px); }
+        .modal-overlay.show { display: flex; }
+        .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.4); max-width: 400px; width: 100%; position: relative; overflow: hidden; }
+        .modal-header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
+        .modal-title-group { flex: 1; }
+        .modal-title { font-size: 18px; font-weight: 800; }
+        .modal-subtitle { font-size: 13px; color: var(--muted); margin-top: 4px; }
+        .modal-close { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .15s; flex-shrink: 0; }
+        .modal-close:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+        .modal-body { padding: 24px; }
+        .form-group { margin-bottom: 16px; text-align: left; }
+        .form-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 15px; font-weight: 600; outline: none; transition: border-color .15s; }
+        .form-input:focus { border-color: var(--accent); }
+        .form-input::placeholder { color: #78716c; font-weight: 400; }
+        .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+        .btn { padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; border: 1px solid transparent; transition: all .15s; }
+        .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: #fff; }
+        .btn-primary:hover { opacity: .9; }
+        .btn-secondary { background: transparent; color: var(--muted); border-color: var(--border); }
+        .btn-secondary:hover { background: var(--bg); color: var(--text); }
+        .error-msg { color: var(--danger); font-size: 13px; margin-top: 8px; display: none; }
+        .error-msg.show { display: block; }
+
+        @media (max-width: 480px) {
+            .cards { grid-template-columns: 1fr; }
+            .brand { font-size: 28px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">☕</div>
+        <div class="brand">BREW<span>POS</span></div>
+        <div class="subtitle">Select your role to continue</div>
+
+        <div class="user-info">
+            <span>👤</span>
+            <span>Signed in as <strong id="user-email"></strong></span>
+        </div>
+
+        <div class="cards">
+            <div class="card" onclick="openModal('admin')">
+                <div class="card-icon admin">👑</div>
+                <div class="card-title">Admin</div>
+                <div class="card-sub">Full access to inventory, sales, staff management</div>
+            </div>
+            <div class="card" onclick="openModal('cashier')">
+                <div class="card-icon cashier">🧑‍💼</div>
+                <div class="card-title">Cashier</div>
+                <div class="card-sub">POS terminal, sales transactions, cart management</div>
+            </div>
+        </div>
+
+        <a href="/admin_logout" onclick="if(!confirm('Logout?'))return false;" style="display:inline-block;margin-top:12px;padding:10px 24px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:10px;text-decoration:none;font-size:13px;font-weight:600;">Logout</a>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div id="admin-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <div class="modal-title">Admin Login</div>
+                    <div class="modal-subtitle">Enter your admin credentials</div>
+                </div>
+                <button class="modal-close" onclick="closeModal('admin')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" id="admin-username" class="form-input" placeholder="admin" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="admin-password" class="form-input" placeholder="admin123" autocomplete="current-password">
+                </div>
+                <div id="admin-error" class="error-msg"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('admin')">Cancel</button>
+                <button class="btn btn-primary" onclick="submitRole('admin')">Login as Admin</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cashier Login Modal -->
+    <div id="cashier-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <div class="modal-title">Cashier Login</div>
+                    <div class="modal-subtitle">Enter your cashier password</div>
+                </div>
+                <button class="modal-close" onclick="closeModal('cashier')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Username *</label>
+                    <input type="text" id="cashier-username" class="form-input" placeholder="Enter your username" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password *</label>
+                    <input type="password" id="cashier-password" class="form-input" placeholder="Enter cashier password" autocomplete="current-password">
+                </div>
+                <div id="cashier-error" class="error-msg"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('cashier')">Cancel</button>
+                <button class="btn btn-primary" onclick="submitRole('cashier')">Login as Cashier</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('user-email').textContent = '{{ session.get("google_auth", {}).get("email", "") }}';
+
+        function openModal(role) {
+            document.getElementById(role + '-modal').classList.add('show');
+            document.getElementById(role + '-error').classList.remove('show');
+            if (role === 'cashier') {
+                document.getElementById('cashier-username').value = '';
+            }
+            if (role === 'admin') {
+                document.getElementById('admin-username').value = '';
+                document.getElementById('admin-password').value = '';
+            }
+            document.getElementById(role + '-password').focus();
+        }
+        function closeModal(role) {
+            document.getElementById(role + '-modal').classList.remove('show');
+            document.getElementById(role + '-error').classList.remove('show');
+        }
+        async function submitRole(role) {
+            const errorEl = document.getElementById(role + '-error');
+            errorEl.classList.remove('show');
+            const payload = { role };
+            if (role === 'admin') {
+                payload.username = document.getElementById('admin-username').value;
+                payload.password = document.getElementById('admin-password').value;
+            } else {
+                payload.username = document.getElementById('cashier-username').value;
+                payload.password = document.getElementById('cashier-password').value;
+            }
+            const resp = await fetch('/api/auth/select_role', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                window.location.href = data.redirect;
+            } else {
+                errorEl.textContent = data.message || 'Login failed.';
+                errorEl.classList.add('show');
+            }
+        }
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeModal('admin');
+                closeModal('cashier');
+            }
+        });
+    </script>
+</body>
+</html>

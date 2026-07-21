@@ -1,0 +1,260 @@
+================================================================
+  BREWPOS - Complete Firebase Connection Setup Guide
+  Coffee Shop POS & Inventory System (Flask + Firebase)
+================================================================
+
+REQUIREMENTS BEFORE STARTING
+-----------------------------
+1. Python 3.x installed (check with: python --version)
+2. A Firebase project (https://console.firebase.google.com)
+3. Internet connection
+
+
+================================================================
+  STEP 1: CREATE / SETUP FIREBASE PROJECT
+================================================================
+
+1. Go to: https://console.firebase.google.com
+2. Click "Add project" or select existing project
+   - Project ID: brewpos-5856a (or your own)
+3. Wait for project creation to complete
+
+
+================================================================
+  STEP 2: ENABLE GOOGLE SIGN-IN (AUTHENTICATION)
+================================================================
+
+1. In Firebase Console, go to: Build > Authentication
+2. Click "Get started" if first time
+3. Go to "Sign-in method" tab
+4. Click "Google" from the list
+5. Toggle "Enable"
+6. Set Project support email (your email)
+7. Click "Save"
+
+
+================================================================
+  STEP 3: CREATE CLOUD FIRESTORE DATABASE
+================================================================
+
+1. In Firebase Console, go to: Build > Firestore Database
+2. Click "Create database"
+3. Select a location (e.g., nam5-asia-southeast1 or us-central)
+4. Choose "Start in test mode" (allows read/write access for 30 days)
+   - IMPORTANT: Update security rules before production!
+5. Click "Enable"
+
+
+================================================================
+  STEP 4: ENABLE REQUIRED APIS
+================================================================
+
+Enable these APIs in Google Cloud Console:
+https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=brewpos-5856a
+
+Required APIs:
+- Cloud Firestore API
+- Identity Toolkit API (for Google Sign-In)
+
+
+================================================================
+  STEP 5: GET FIREBASE WEB APP CONFIG
+================================================================
+
+1. In Firebase Console, go to: Project Settings (gear icon)
+2. Scroll down to "Your apps" section
+3. Click "Add app" > Select Web (`</`)
+4. Register app (name: BrewPOS Web App)
+5. Copy the firebaseConfig values:
+   
+   const firebaseConfig = {
+     apiKey: "AIzaSy...",
+     authDomain: "your-project.firebaseapp.com",
+     projectId: "your-project",
+     storageBucket: "your-project.appspot.com",
+     messagingSenderId: "123456789",
+     appId: "1:123456789:web:abc123"
+   };
+
+
+================================================================
+  STEP 6: CREATE .ENV FILE
+================================================================
+
+Create a file named `.env` in the BrewPOS root folder (C:\xampp\htdocs\pharmacon_finals\BrewPOS\.env)
+
+Paste these values (replace with YOUR values from Step 5):
+
+BREWPOS_FIREBASE_API_KEY=AIzaSyYourApiKey
+BREWPOS_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+BREWPOS_FIREBASE_PROJECT_ID=your-project
+BREWPOS_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+BREWPOS_FIREBASE_SENDER_ID=123456789
+BREWPOS_FIREBASE_APP_ID=1:123456789:web:abc123
+
+
+================================================================
+  STEP 7: DOWNLOAD SERVICE ACCOUNT KEY
+================================================================
+
+1. In Firebase Console, go to: Project Settings > Service Accounts
+2. Click "Generate new private key"
+3. Confirm and download the JSON file
+4. Rename it to: firebase_credentials.json
+5. Place it in: C:\xampp\htdocs\pharmacon_finals\BrewPOS\firebase_credentials.json
+
+IMPORTANT: The firebase_credentials.json must contain REAL values,
+not "REPLACE_WITH_YOUR_PROJECT_ID" placeholders.
+
+
+================================================================
+  STEP 8: ADD AUTHORIZED DOMAINS
+================================================================
+
+1. In Firebase Console, go to: Authentication > Settings
+2. Scroll to "Authorized domains"
+3. Add these domains:
+   - localhost
+   - 127.0.0.1
+   - 192.168.0.106 (if accessing from local network)
+4. For production, add your actual domain
+
+
+================================================================
+  STEP 9: INSTALL PYTHON DEPENDENCIES
+================================================================
+
+Open terminal in BrewPOS folder and run:
+
+    pip install -r requirements.txt
+
+This installs:
+- Flask==2.3.3
+- firebase-admin==6.4.0
+- python-dotenv==1.0.1
+- And all required dependencies
+
+
+================================================================
+  STEP 10: RUN THE APPLICATION
+================================================================
+
+In terminal (BrewPOS folder):
+
+    python app.py
+
+You should see:
+    * Serving Flask app 'app'
+    * Running on http://127.0.0.1:5000
+
+
+================================================================
+  STEP 11: TEST THE APPLICATION
+================================================================
+
+1. Open browser: http://localhost:5000 or http://127.0.0.1:5000
+2. You should see the BrewPOS login page
+3. Click "Sign in with Google"
+4. Google Sign-In popup should appear
+5. Sign in with your Google account
+6. First account becomes ADMIN
+7. Subsequent accounts need to be registered as CASHIER by admin
+
+
+================================================================
+  TROUBLESHOOTING
+================================================================
+
+PROBLEM: "Cloud Firestore API has not been used" error
+SOLUTION: Enable the API at:
+https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=brewpos-5856a
+
+PROBLEM: "auth/unauthorized-domain" error
+SOLUTION: Add 'localhost' to Authorized domains in Firebase Console > Authentication > Settings
+
+PROBLEM: Google Sign-In popup doesn't appear
+SOLUTION: 
+- Check browser console (F12 > Console tab) for errors
+- Ensure .env file exists with correct values
+- Ensure firebase_credentials.json has valid data
+- Restart Flask app after changes
+
+PROBLEM: "Missing ID token" or "Invalid Google token"
+SOLUTION: 
+- Ensure Google Sign-In is enabled in Firebase Console
+- Ensure .env file has correct firebase config
+- Ensure service account key is valid
+
+PROBLEM: App crashes on startup
+SOLUTION:
+- Check that firebase_credentials.json exists
+- Check that all values in firebase_credentials.json are real (not "REPLACE")
+- Check internet connection
+- Ensure Firestore API is enabled
+
+
+================================================================
+  FILES NEEDED IN PROJECT ROOT
+================================================================
+
+1. firebase_credentials.json  (Service Account Key from Firebase)
+2. .env                       (Firebase Web App Config)
+3. app.py                     (Flask application - already exists)
+4. firebase_config.py         (Firebase config - already exists)
+5. models.py                  (Data models - already exists)
+6. services.py                (Business logic - already exists)
+7. requirements.txt           (Dependencies - already exists)
+
+
+================================================================
+  SECURITY NOTES
+================================================================
+
+- NEVER commit firebase_credentials.json or .env to version control
+- Add them to .gitignore
+- Use test mode for Firestore only during development
+- Set up proper Firestore security rules before production
+- The service account key has full admin access - keep it secret!
+
+
+================================================================
+  FIREBASE CONSOLE QUICK LINKS
+================================================================
+
+Firebase Console:        https://console.firebase.google.com
+Authentication:          https://console.firebase.google.com/project/brewpos-5856a/authentication
+Firestore Database:      https://console.firebase.google.com/project/brewpos-5856a/firestore
+Project Settings:        https://console.firebase.google.com/project/brewpos-5856a/settings
+Service Accounts:        https://console.firebase.google.com/project/brewpos-5856a/settings/serviceaccounts
+API Dashboard:           https://console.developers.google.com/apis/dashboard?project=brewpos-5856a
+
+
+================================================================
+  FIRST TIME SETUP CHECKLIST
+================================================================
+
+[ ] 1. Created Firebase project
+[ ] 2. Enabled Google Sign-In in Authentication
+[ ] 3. Created Cloud Firestore database
+[ ] 4. Enabled Cloud Firestore API
+[ ] 5. Added Web app and got firebaseConfig values
+[ ] 6. Created .env file with correct values
+[ ] 7. Downloaded service account key as firebase_credentials.json
+[ ] 8. Replaced placeholder values in firebase_credentials.json
+[ ] 9. Added localhost to Authorized domains
+[ ] 10. Installed dependencies: pip install -r requirements.txt
+[ ] 11. Ran: python app.py
+[ ] 12. Tested: http://localhost:5000
+[ ] 13. Successfully signed in with Google
+
+
+================================================================
+  CONTACT / SUPPORT
+================================================================
+
+For issues with:
+- Firebase: https://firebase.google.com/support
+- Flask: https://flask.palletsprojects.com/
+- BrewPOS: Check the project documentation
+
+================================================================

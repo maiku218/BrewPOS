@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Application Login</title>
+    <style>
+        :root {
+            --accent: #b45309; --accent-dark: #92400e; --accent-light: #f59e0b;
+            --bg: #1c1917; --surface: #292524; --border: #44403c;
+            --text: #fafaf9; --muted: #a8a29e; --success: #16a34a; --danger: #dc2626;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #1c1917 0%, #292524 50%, #3f2e22 100%);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            color: var(--text); position: relative; overflow: hidden;
+        }
+        body::before {
+            content: ''; position: absolute; inset: 0;
+            background: radial-gradient(circle at 20% 80%, rgba(180,83,9,.15), transparent 50%),
+                        radial-gradient(circle at 80% 20%, rgba(245,158,11,.1), transparent 50%);
+            pointer-events: none;
+        }
+        .container { position: relative; z-index: 1; text-align: center; width: 100%; max-width: 420px; padding: 20px; }
+        .logo { width: 80px; height: 80px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; font-size: 40px; box-shadow: 0 8px 24px rgba(180,83,9,.3); }
+        .brand { font-size: 36px; font-weight: 900; letter-spacing: -1px; color: var(--text); }
+        .brand span { color: var(--accent-light); }
+        .subtitle { color: var(--muted); margin: 8px 0 36px; font-size: 15px; font-weight: 500; }
+        .user-info { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; margin-bottom: 28px; display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+        .user-info strong { color: var(--text); }
+        .card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+            padding: 32px 24px; box-shadow: 0 4px 12px rgba(0,0,0,.2); margin-bottom: 18px;
+        }
+        .form-group { margin-bottom: 16px; text-align: left; }
+        .form-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 15px; font-weight: 600; outline: none; transition: border-color .15s; }
+        .form-input:focus { border-color: var(--accent); }
+        .form-input::placeholder { color: #78716c; font-weight: 400; }
+        .role-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        .role-tab { padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--muted); font-size: 14px; font-weight: 700; cursor: pointer; transition: all .15s; }
+        .role-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .role-tab:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+        .btn { width: 100%; padding: 14px; border: none; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; transition: all .15s; }
+        .btn:hover { opacity: .9; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .error-msg { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 18px; }
+        .owner-btn { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--accent-light); font-size: 14px; font-weight: 700; cursor: pointer; transition: all .15s; margin-top: 12px; }
+        .owner-btn:hover { background: var(--surface); border-color: var(--accent); }
+        .note { font-size: 12px; color: var(--muted); margin-top: 22px; line-height: 1.5; }
+        @media (max-width: 480px) {
+            .brand { font-size: 28px; }
+            .card { padding: 24px 18px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">&#128722;</div>
+        <div class="brand">BREW<span>POS</span></div>
+        <div class="subtitle">Application Login</div>
+
+        <div class="user-info">
+            <span>&#128100;</span>
+            <span>Signed in as <strong id="user-email"></strong></span>
+        </div>
+
+        <div class="card">
+            <div class="role-tabs">
+                <button class="role-tab active" onclick="selectRole('admin', this)">Admin</button>
+                <button class="role-tab" onclick="selectRole('cashier', this)">Cashier</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Username</label>
+                <input type="text" id="username" class="form-input" placeholder="Enter username" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" id="password" class="form-input" placeholder="Enter password" autocomplete="current-password">
+            </div>
+            <button class="btn" id="loginBtn" onclick="submitLogin()">Login</button>
+            <div id="error" class="error-msg"></div>
+        </div>
+
+        <button class="owner-btn" id="ownerBtn" onclick="ownerAccess()" style="display:none;">
+            &#128275; Owner Access
+        </button>
+
+        <div class="note">
+            Authorized personnel only. Contact your administrator for account access.
+        </div>
+    </div>
+
+    <script>
+        let currentRole = 'admin';
+        document.getElementById('user-email').textContent = '{{ session.get("google_auth", {}).get("email", "") }}';
+
+        {% if session.get("google_auth") %}
+        document.getElementById('ownerBtn').style.display = 'block';
+        {% endif %}
+
+        function selectRole(role, el) {
+            currentRole = role;
+            document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            document.getElementById('error').textContent = '';
+        }
+
+        async function submitLogin() {
+            const errorEl = document.getElementById('error');
+            const btn = document.getElementById('loginBtn');
+            errorEl.textContent = '';
+            btn.disabled = true;
+
+            const payload = {
+                role: currentRole,
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+            };
+
+            try {
+                const resp = await fetch('/api/app_login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    errorEl.textContent = data.message || 'Login failed.';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                errorEl.textContent = 'Network error. Please try again.';
+                btn.disabled = false;
+            }
+        }
+
+        async function ownerAccess() {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = '';
+            try {
+                const resp = await fetch('/api/owner_access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    errorEl.textContent = data.message || 'Owner access denied.';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Network error. Please try again.';
+            }
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') submitLogin();
+        });
+    </script>
+</body>
+</html>

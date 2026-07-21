@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Add Product</title>
+    <style>
+        :root { --accent:#b45309; --bg:#fafaf9; --surface:#fff; --border:#e7e5e4; --text:#1c1917; --muted:#78716c; --shadow:0 1px 3px rgba(0,0,0,.08); }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
+        .sidebar { width:260px; background:#fff; border-right:1px solid var(--border); padding:0; display:flex; flex-direction:column; position:fixed; height:100vh; z-index:100; }
+        .sidebar-header { padding:24px 20px 20px; border-bottom:1px solid var(--border); }
+        .brand { font-size:20px; font-weight:800; letter-spacing:-.5px; color:var(--text); display:flex; align-items:center; gap:10px; }
+        .brand-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),#92400e); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; flex-shrink:0; }
+        .brand span { color:var(--accent); }
+        .nav-wrap { flex:1; overflow-y:auto; padding:12px 0; }
+        .nav-wrap::-webkit-scrollbar { width:4px; }
+        .nav-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+        .nav-section { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--muted); padding:16px 20px 6px; }
+        .nav-item { display:flex; align-items:center; gap:10px; padding:9px 20px; color:#57534e; text-decoration:none; font-size:13px; font-weight:500; transition:all .12s; border-left:3px solid transparent; margin:1px 0; }
+        .nav-item:hover { background:#fafaf9; color:var(--text); }
+        .nav-item.active { background:#fef3c7; color:#92400e; border-left-color:var(--accent); font-weight:600; }
+        .nav-icon { font-size:15px; width:20px; text-align:center; flex-shrink:0; }
+        .sidebar-footer { padding:12px 16px; border-top:1px solid var(--border); }
+        .logout-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:10px; background:#fef2f2; color:var(--danger,#dc2626); border:1px solid #fecaca; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .12s; }
+        .logout-btn:hover { background:var(--danger,#dc2626); color:#fff; border-color:var(--danger,#dc2626); }
+        .content { margin-left:260px; flex:1; padding:28px 32px; max-width:900px; }
+        .page-title { font-size:24px; font-weight:800; margin-bottom:4px; }
+        .page-sub { color:var(--muted); font-size:14px; margin-bottom:24px; }
+        .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px; box-shadow:var(--shadow); }
+        .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        label { display:block; font-size:13px; font-weight:600; color:var(--text); margin-bottom:6px; }
+        input, select, textarea { width:100%; padding:11px 13px; border:1px solid var(--border); border-radius:9px; font-size:14px; outline:none; }
+        input:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(180,83,9,.12); }
+        .full { grid-column:1/-1; }
+        .btn { padding:12px 22px; background:var(--accent); color:#fff; border:none; border-radius:9px; font-weight:700; font-size:15px; cursor:pointer; }
+        .btn:hover { background:var(--accent-dark); }
+        .btn:disabled { opacity:.6; cursor:not-allowed; }
+        .alert { padding:12px 16px; border-radius:9px; font-size:14px; margin-bottom:18px; }
+        .alert.error { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+        .alert.success { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
+        .variant-row { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+        .variant-row input { flex:1; }
+        .variant-row .remove-variant { background:#fee2e2; color:#b91c1c; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:700; }
+        .add-variant-btn { background:#fef3c7; color:#92400e; border:1px solid #fde68a; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600; font-size:13px; margin-top:6px; }
+        .add-variant-btn:hover { background:#fde68a; }
+        .addon-list { display:flex; flex-direction:column; gap:8px; }
+        .addon-item { display:flex; align-items:center; gap:8px; font-size:14px; }
+        .hidden { display:none; }
+        .radio-group { display:flex; gap:16px; margin-top:6px; }
+        .radio-group label { font-weight:400; display:flex; align-items:center; gap:6px; margin-bottom:0; }
+        .status-select { padding:11px 13px; border:1px solid var(--border); border-radius:9px; font-size:14px; }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="brand">
+                <div class="brand-icon">☕</div>
+                <div>BREW<span>POS</span></div>
+            </div>
+        </div>
+        <div class="nav-wrap">
+            <div class="nav-section">Operations</div>
+            <a href="/admin" class="nav-item"><span class="nav-icon">📊</span>Dashboard</a>
+            <a href="/admin/cashier_logs" class="nav-item"><span class="nav-icon">👥</span>Cashier Logs</a>
+            <a href="/admin/activity_logs" class="nav-item"><span class="nav-icon">📝</span>Activity Monitor</a>
+
+            <div class="nav-section">Catalog</div>
+            <a href="/all_products" class="nav-item"><span class="nav-icon">📦</span>All Products</a>
+            <a href="/add_product" class="nav-item active"><span class="nav-icon">➕</span>Add Product</a>
+
+            <div class="nav-section">Sales Reports</div>
+            <a href="/sales_dashboard" class="nav-item"><span class="nav-icon">📈</span>Sales Dashboard</a>
+            <a href="/coffee_sales" class="nav-item"><span class="nav-icon">☕</span>Coffee Sales</a>
+            <a href="/pastry_sales" class="nav-item"><span class="nav-icon">🥐</span>Pastry Sales</a>
+
+            <div class="nav-section">Inventory</div>
+            <a href="/out_of_stock" class="nav-item"><span class="nav-icon">⚠️</span>Low Stock Alerts</a>
+            <a href="/expiring" class="nav-item"><span class="nav-icon">⏰</span>Expiring Alerts</a>
+
+            <div class="nav-section">Management</div>
+            <a href="/register_cashier" class="nav-item"><span class="nav-icon">🧑‍💼</span>Register Cashier</a>
+            <a href="/delete_cashier" class="nav-item"><span class="nav-icon">🗂️</span>Manage Staff</a>
+            <a href="/change_admin_password" class="nav-item"><span class="nav-icon">🔒</span>Security Settings</a>
+            <a href="/receipt_customization" class="nav-item"><span class="nav-icon">🧾</span>Receipt Customization</a>
+            <a href="/backup_restore" class="nav-item"><span class="nav-icon">💾</span>Backup / Restore</a>
+        </div>
+        <div class="sidebar-footer">
+            <a href="/logout" class="logout-btn"><span>🚪</span> Logout</a>
+        </div>
+    </aside>
+    <main class="content">
+        <div class="page-title">Add Product</div>
+        <div class="page-sub">Register a new product</div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for cat, msg in messages %}
+                <div class="alert {{ 'success' if cat=='success' else 'error' }}">{{ msg }}</div>
+            {% endfor %}
+        {% endwith %}
+        <div class="panel">
+            <form method="POST" id="addProductForm">
+                <div class="form-grid">
+                    <div class="full">
+                        <label>Category *</label>
+                        <select name="category" id="category" required onchange="updateForm()">
+                            <option value="">-- Select --</option>
+                            {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="full">
+                        <label>Product Image URL</label>
+                        <input type="url" name="image_url" placeholder="https://example.com/image.jpg" id="imageUrlInput">
+                    </div>
+                    <div>
+                        <label>Product Name *</label>
+                        <input type="text" name="product_name" id="product_name" placeholder="e.g. Caramel Macchiato" required autocomplete="off">
+                    </div>
+                    <div>
+                        <label>Barcode</label>
+                        <input type="text" name="barcode" placeholder="Scan or enter barcode">
+                    </div>
+                    <div class="full">
+                        <label>Description (Optional)</label>
+                        <textarea name="description" rows="2" placeholder="Brief product description"></textarea>
+                    </div>
+                    <div>
+                        <label>Product Status</label>
+                        <select name="status" class="status-select">
+                            <option value="Available">Available</option>
+                            <option value="Out of Stock">Out of Stock</option>
+                        </select>
+                    </div>
+
+                    <div id="singlePriceSection" class="hidden">
+                        <label>Price (₱) *</label>
+                        <input type="number" name="price" step="0.01" min="0" placeholder="0.00">
+                    </div>
+
+                    <div id="multipleVariantsSection" class="hidden full">
+                        <label>Pricing Type</label>
+                        <div class="radio-group">
+                            <label><input type="radio" name="pricing_type" value="single" checked onchange="togglePricingType()"> Single Price</label>
+                            <label><input type="radio" name="pricing_type" value="multiple" onchange="togglePricingType()"> Multiple Variants</label>
+                        </div>
+                    </div>
+
+                    <div id="singlePriceSection2" class="hidden">
+                        <label>Price (₱) *</label>
+                        <input type="number" name="price" step="0.01" min="0" placeholder="0.00">
+                    </div>
+
+                    <div id="variantsSection" class="hidden full">
+                        <label>Variants *</label>
+                        <div id="variantsContainer"></div>
+                        <button type="button" class="add-variant-btn" onclick="addVariant()">+ Add Variant</button>
+                    </div>
+
+                    <div id="addonsSection" class="hidden full">
+                        <label>Available Add-ons</label>
+                        <div class="addon-list">
+                            {% for addon in DEFAULT_ADDONS %}
+                            <div class="addon-item">
+                                <input type="checkbox" name="addons" value="{{ addon }}" id="addon_{{ loop.index }}">
+                                <label for="addon_{{ loop.index }}" style="margin-bottom:0;font-weight:400;flex:1;">{{ addon }}</label>
+                                <input type="number" name="addon_price[]" step="0.01" min="0" placeholder="Price" value="0" style="width:100px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" disabled>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div id="stockSection">
+                        <label>Stock Quantity *</label>
+                        <input type="number" name="stock_quantity" min="0" placeholder="0" required>
+                    </div>
+                    <div id="minStockSection">
+                        <label>Minimum Stock</label>
+                        <input type="number" name="stock_minimum" min="0" placeholder="0">
+                    </div>
+                </div>
+                <div style="margin-top:22px;"><button class="btn" type="submit" id="saveBtn">Save Product</button></div>
+            </form>
+        </div>
+    </main>
+    <script>
+        const CATEGORY_VARIANTS = {
+            'Coffee': ['Small', 'Medium', 'Large'],
+            'Milk Tea': ['Regular', 'Large'],
+            'Cakes': ['Slice', 'Whole Cake'],
+        };
+        const ADDON_CATEGORIES = ['Coffee', 'Non-Coffee', 'Milk Tea', 'Tea'];
+        const VARIANT_CATEGORIES = ['Coffee', 'Milk Tea', 'Cakes'];
+        const SINGLE_PRICE_ONLY = ['Pastry', 'Sandwich', 'Snacks', 'Add-ons'];
+        const STOCK_CATEGORIES = ['Coffee', 'Non-Coffee', 'Milk Tea', 'Tea', 'Pastry', 'Cakes', 'Sandwich', 'Snacks', 'Others'];
+
+        function updateForm() {
+            const cat = document.getElementById('category').value;
+            const singlePriceSection = document.getElementById('singlePriceSection');
+            const singlePriceSection2 = document.getElementById('singlePriceSection2');
+            const multipleVariantsSection = document.getElementById('multipleVariantsSection');
+            const variantsSection = document.getElementById('variantsSection');
+            const addonsSection = document.getElementById('addonsSection');
+            const stockSection = document.getElementById('stockSection');
+            const minStockSection = document.getElementById('minStockSection');
+
+            singlePriceSection.classList.add('hidden');
+            singlePriceSection2.classList.add('hidden');
+            multipleVariantsSection.classList.add('hidden');
+            variantsSection.classList.add('hidden');
+            addonsSection.classList.add('hidden');
+            stockSection.classList.add('hidden');
+            minStockSection.classList.add('hidden');
+
+            document.getElementById('variantsContainer').innerHTML = '';
+
+            if (!cat) return;
+
+            if (SINGLE_PRICE_ONLY.includes(cat) || !VARIANT_CATEGORIES.includes(cat)) {
+                singlePriceSection.classList.remove('hidden');
+            } else if (VARIANT_CATEGORIES.includes(cat)) {
+                multipleVariantsSection.classList.remove('hidden');
+                variantsSection.classList.remove('hidden');
+                addDefaultVariants(CATEGORY_VARIANTS[cat] || []);
+                togglePricingType();
+            }
+
+            if (ADDON_CATEGORIES.includes(cat)) {
+                addonsSection.classList.remove('hidden');
+                initAddonPriceInputs();
+            }
+
+            if (STOCK_CATEGORIES.includes(cat) || cat === 'Add-ons') {
+                stockSection.classList.remove('hidden');
+                minStockSection.classList.remove('hidden');
+            }
+        }
+
+        function initAddonPriceInputs() {
+            const checkboxes = document.querySelectorAll('#addonsSection input[type="checkbox"]');
+            const priceInputs = document.querySelectorAll('#addonsSection input[name="addon_price[]"]');
+            checkboxes.forEach((cb, idx) => {
+                if (priceInputs[idx]) {
+                    priceInputs[idx].disabled = !cb.checked;
+                    cb.addEventListener('change', () => {
+                        priceInputs[idx].disabled = !cb.checked;
+                        if (!cb.checked) priceInputs[idx].value = '0';
+                    });
+                }
+            });
+        }
+
+        function togglePricingType() {
+            const pricingType = document.querySelector('input[name="pricing_type"]:checked').value;
+            const singlePriceSection2 = document.getElementById('singlePriceSection2');
+            const variantsSection = document.getElementById('variantsSection');
+            if (pricingType === 'single') {
+                singlePriceSection2.classList.remove('hidden');
+                variantsSection.classList.add('hidden');
+            } else {
+                singlePriceSection2.classList.add('hidden');
+                variantsSection.classList.remove('hidden');
+            }
+        }
+
+        function addDefaultVariants(names) {
+            const container = document.getElementById('variantsContainer');
+            container.innerHTML = '';
+            names.forEach(name => addVariant(name));
+        }
+
+        function addVariant(name='', price='') {
+            const container = document.getElementById('variantsContainer');
+            const row = document.createElement('div');
+            row.className = 'variant-row';
+            row.innerHTML = `
+                <input type="text" name="variant_name[]" placeholder="Variant name" value="${name}" required>
+                <input type="number" name="variant_price[]" step="0.01" min="0" placeholder="Price" value="${price}" required>
+                <button type="button" class="remove-variant" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+
+        document.getElementById('addProductForm').addEventListener('submit', function(e) {
+            const cat = document.getElementById('category').value;
+            const name = document.querySelector('input[name="product_name"]').value.trim();
+            if (!cat) { alert('Please select a category.'); e.preventDefault(); return; }
+            if (!name) { alert('Product name is required.'); e.preventDefault(); return; }
+
+            const pricingType = document.querySelector('input[name="pricing_type"]:checked')?.value || 'single';
+            if (pricingType === 'multiple') {
+                const variantNames = document.querySelectorAll('input[name="variant_name[]"]');
+                const variantPrices = document.querySelectorAll('input[name="variant_price[]"]');
+                if (variantNames.length === 0) { alert('At least one variant is required.'); e.preventDefault(); return; }
+                for (let i = 0; i < variantNames.length; i++) {
+                    if (!variantNames[i].value.trim()) { alert('Variant name is required.'); e.preventDefault(); return; }
+                    if (variantPrices[i].value === '' || parseFloat(variantPrices[i].value) < 0) { alert('Every variant must have a valid price.'); e.preventDefault(); return; }
+                }
+            } else {
+                const priceField = document.querySelector('input[name="price"]');
+                if (!priceField || priceField.value === '' || parseFloat(priceField.value) < 0) { alert('Price is required and cannot be negative.'); e.preventDefault(); return; }
+            }
+
+            const stockQty = document.querySelector('input[name="stock_quantity"]');
+            if (!stockQty || stockQty.value === '' || parseInt(stockQty.value) < 0) { alert('Stock quantity is required and cannot be negative.'); e.preventDefault(); return; }
+        });
+    </script>
+</body>
+</html>

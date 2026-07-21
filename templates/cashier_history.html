@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Sales History</title>
+    <style>
+        :root { --accent:#b45309; --bg:#f1f5f9; --surface:#fff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b; --shadow:0 1px 3px rgba(0,0,0,.1); }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+        .header { background:var(--surface); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; box-shadow:var(--shadow); }
+        .brand { font-weight:800; font-size:20px; } .brand span { color:var(--accent); }
+        .layout { display:grid; grid-template-columns:64px 1fr; gap:16px; padding:16px 24px; }
+        .left-nav { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px 0; display:flex; flex-direction:column; align-items:center; gap:8px; box-shadow:var(--shadow); }
+        .nav-icon { width:44px; height:44px; display:flex; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; color:var(--muted); background:none; border:none; text-decoration:none; }
+        .nav-icon:hover { background:var(--bg); } .nav-icon.active { background:var(--accent); color:#fff; }
+        .nav-icon.logout { margin-top:auto; color:#dc2626; } .nav-icon.logout:hover { background:#fee2e2; }
+        .main { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; box-shadow:var(--shadow); }
+        .page-title { font-size:22px; font-weight:800; margin-bottom:16px; }
+        .sale { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+        .sale-top { display:flex; justify-content:space-between; font-weight:700; }
+        .sale-items { font-size:13px; color:var(--muted); margin-top:6px; }
+        .empty { color:var(--muted); }
+    </style>
+</head>
+<body>
+    <header class="header"><div class="brand">BREW<span>POS</span></div><span>Cashier: <b>{{ session['cashier_user'] }}</b></span></header>
+    <div class="layout">
+        <nav class="left-nav">
+            <a href="/cashier" class="nav-icon" title="POS"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></a>
+            <a href="/cashier_history" class="nav-icon active" title="Sales History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></a>
+            <a class="nav-icon logout" onclick="if(confirm('Logout?'))window.location.href='/logout'" title="Logout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></a>
+        </nav>
+        <main class="main">
+            <div class="page-title">Today's Sales History</div>
+            {% for s in sales %}
+            <div class="sale">
+                <div class="sale-top"><span>{{ s.receipt_number }}</span><span>₱{{ "%.2f"|format(s.total_amount) }}</span></div>
+                <div class="sale-top" style="font-weight:500;color:var(--muted);font-size:12px;">{{ s.sale_date }}</div>
+                <div class="sale-items">
+                    {% for it in s.items %}{{ it.name }} ({{ it.quantity }}){% if not loop.last %}, {% endif %}{% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <p class="empty">No sales recorded today.</p>
+            {% endfor %}
+        </main>
+    </div>
+</body>
+</html>

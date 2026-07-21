@@ -1,0 +1,31 @@
+BrewPOS Setup Commands
+======================
+
+STEP 1: Install dependencies
+-----------------------------
+pip install -r requirements.txt
+
+STEP 2: Verify Firebase environment variables
+----------------------------------------------
+echo %BREWPOS_FIREBASE_API_KEY%
+echo %BREWPOS_FIREBASE_AUTH_DOMAIN%
+echo %BREWPOS_FIREBASE_PROJECT_ID%
+
+STEP 3: Run the Flask app
+--------------------------
+python app.py
+
+STEP 4: Open in browser
+------------------------
+http://localhost:5000
+or
+http://127.0.0.1:5000
+
+TROUBLESHOOTING
+---------------
+If Firestore API error appears, enable it here:
+https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=brewpos-5856a
+
+If Google Sign-In popup doesn't appear, check browser console (F12) for errors.
+
+Ensure firebase_credentials.json has valid values (not REPLACE placeholders).

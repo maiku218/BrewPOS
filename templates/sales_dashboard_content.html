@@ -1,0 +1,63 @@
+{% extends "sales_base.html" %}
+{% block content %}
+<div class="page-title">Sales Dashboard</div>
+<div class="page-sub">Combined Coffee &amp; Pastry performance</div>
+
+<div class="cards">
+    <div class="card">
+        <div class="card-label">Today</div>
+        <div class="card-value">₱{{ "%.2f"|format(daily_sales) }}</div>
+        <div class="card-sub">{{ daily_count }} sales · ☕{{ "%.0f"|format(daily_coffee_sales) }} / 🥐{{ "%.0f"|format(daily_pastry_sales) }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">This Week</div>
+        <div class="card-value">₱{{ "%.2f"|format(weekly_sales) }}</div>
+        <div class="card-sub">{{ weekly_count }} sales</div>
+    </div>
+    <div class="card">
+        <div class="card-label">This Month</div>
+        <div class="card-value">₱{{ "%.2f"|format(monthly_sales) }}</div>
+        <div class="card-sub">{{ monthly_count }} sales</div>
+    </div>
+    <div class="card">
+        <div class="card-label">This Year</div>
+        <div class="card-value">₱{{ "%.2f"|format(yearly_sales) }}</div>
+        <div class="card-sub">{{ yearly_count }} sales</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Overall</div>
+        <div class="card-value">₱{{ "%.2f"|format(overall_sales) }}</div>
+        <div class="card-sub">{{ overall_count }} sales</div>
+    </div>
+</div>
+
+<div class="two-col">
+    <div class="panel">
+        <h3>Daily Sales — Last 30 Days</h3>
+        <canvas id="salesChart" height="110"></canvas>
+    </div>
+    <div class="panel">
+        <h3>Top Selling Products</h3>
+        {% for name, qty in popular %}
+        <div class="top-item"><span>{{ name }}</span><b>{{ qty }}</b></div>
+        {% else %}
+        <div class="empty-state">No sales yet.</div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ chart_labels | tojson }},
+            datasets: [
+                { label: 'Coffee', data: {{ coffee_values | tojson }}, borderColor: '#b45309', backgroundColor: 'rgba(180,83,9,.1)', fill: true, tension: .3 },
+                { label: 'Pastry', data: {{ pastry_values | tojson }}, borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,.1)', fill: true, tension: .3 }
+            ]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { callback: v => '₱' + v } } } }
+    });
+</script>
+{% endblock %}

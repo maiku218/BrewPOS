@@ -1,0 +1,17 @@
+{% extends "sales_base.html" %}
+{% block content %}
+<div class="page-title">🥐 Pastry Sales</div>
+<div class="page-sub">Pastries &amp; Add-ons transactions</div>
+<div class="panel">
+    <table>
+        <thead><tr><th>Receipt No.</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for s in sales %}
+            <tr><td>{{ s.receiptNo }}</td><td>{{ s.date }}</td><td>₱{{ "%.2f"|format(s.total) }}</td><td><span class="badge {{ s.status|lower }}">{{ s.status }}</span></td></tr>
+            {% else %}
+            <tr><td colspan="4" class="empty-state">No pastry sales recorded.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Receipt Customization</title>
+    <style>
+        :root { --accent:#b45309; --bg:#fafaf9; --surface:#fff; --border:#e7e5e4; --text:#1c1917; --muted:#78716c; --shadow:0 1px 3px rgba(0,0,0,.08); }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
+        .sidebar { width:260px; background:#fff; border-right:1px solid var(--border); padding:0; display:flex; flex-direction:column; position:fixed; height:100vh; z-index:100; }
+        .sidebar-header { padding:24px 20px 20px; border-bottom:1px solid var(--border); }
+        .brand { font-size:20px; font-weight:800; letter-spacing:-.5px; color:var(--text); display:flex; align-items:center; gap:10px; }
+        .brand-icon { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),#92400e); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; flex-shrink:0; }
+        .brand span { color:var(--accent); }
+        .nav-wrap { flex:1; overflow-y:auto; padding:12px 0; }
+        .nav-wrap::-webkit-scrollbar { width:4px; }
+        .nav-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+        .nav-section { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--muted); padding:16px 20px 6px; }
+        .nav-item { display:flex; align-items:center; gap:10px; padding:9px 20px; color:#57534e; text-decoration:none; font-size:13px; font-weight:500; transition:all .12s; border-left:3px solid transparent; margin:1px 0; }
+        .nav-item:hover { background:#fafaf9; color:var(--text); }
+        .nav-item.active { background:#fef3c7; color:#92400e; border-left-color:var(--accent); font-weight:600; }
+        .nav-icon { font-size:15px; width:20px; text-align:center; flex-shrink:0; }
+        .sidebar-footer { padding:12px 16px; border-top:1px solid var(--border); }
+        .logout-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:10px; background:#fef2f2; color:var(--danger,#dc2626); border:1px solid #fecaca; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .12s; }
+        .logout-btn:hover { background:var(--danger,#dc2626); color:#fff; border-color:var(--danger,#dc2626); }
+        .content { margin-left:260px; flex:1; padding:28px 32px; max-width:800px; }
+        .page-title { font-size:24px; font-weight:800; margin-bottom:4px; }
+        .page-sub { color:var(--muted); font-size:14px; margin-bottom:24px; }
+        .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:26px; box-shadow:var(--shadow); }
+        label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; }
+        input, textarea { width:100%; padding:11px 13px; border:1px solid var(--border); border-radius:9px; font-size:14px; outline:none; }
+        textarea { resize:vertical; min-height:80px; }
+        .btn { padding:11px 22px; background:var(--accent); color:#fff; border:none; border-radius:9px; font-weight:700; cursor:pointer; }
+        .btn:hover { background:#92400e; }
+        .alert { padding:12px 16px; border-radius:9px; font-size:14px; margin-bottom:18px; }
+        .alert.success { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
+        .preview { background:#1c1917; color:#fff; border-radius:10px; padding:18px; font-family:'Courier New',monospace; font-size:13px; margin-top:16px; text-align:center; white-space:pre-wrap; }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="brand">
+                <div class="brand-icon">☕</div>
+                <div>BREW<span>POS</span></div>
+            </div>
+        </div>
+        <div class="nav-wrap">
+            <div class="nav-section">Operations</div>
+            <a href="/admin" class="nav-item"><span class="nav-icon">📊</span>Dashboard</a>
+            <a href="/admin/cashier_logs" class="nav-item"><span class="nav-icon">👥</span>Cashier Logs</a>
+            <a href="/admin/activity_logs" class="nav-item"><span class="nav-icon">📝</span>Activity Monitor</a>
+
+            <div class="nav-section">Catalog</div>
+            <a href="/all_products" class="nav-item"><span class="nav-icon">📦</span>All Products</a>
+            <a href="/add_product" class="nav-item"><span class="nav-icon">➕</span>Add Product</a>
+
+            <div class="nav-section">Sales Reports</div>
+            <a href="/sales_dashboard" class="nav-item"><span class="nav-icon">📈</span>Sales Dashboard</a>
+            <a href="/coffee_sales" class="nav-item"><span class="nav-icon">☕</span>Coffee Sales</a>
+            <a href="/pastry_sales" class="nav-item"><span class="nav-icon">🥐</span>Pastry Sales</a>
+
+            <div class="nav-section">Inventory</div>
+            <a href="/out_of_stock" class="nav-item"><span class="nav-icon">⚠️</span>Low Stock Alerts</a>
+            <a href="/expiring" class="nav-item"><span class="nav-icon">⏰</span>Expiring Alerts</a>
+
+            <div class="nav-section">Management</div>
+            <a href="/register_cashier" class="nav-item"><span class="nav-icon">🧑‍💼</span>Register Cashier</a>
+            <a href="/delete_cashier" class="nav-item"><span class="nav-icon">🗂️</span>Manage Staff</a>
+            <a href="/change_admin_password" class="nav-item"><span class="nav-icon">🔒</span>Security Settings</a>
+            <a href="/receipt_customization" class="nav-item active"><span class="nav-icon">🧾</span>Receipt Customization</a>
+            <a href="/backup_restore" class="nav-item"><span class="nav-icon">💾</span>Backup / Restore</a>
+        </div>
+        <div class="sidebar-footer">
+            <a href="/logout" class="logout-btn"><span>🚪</span> Logout</a>
+        </div>
+    </aside>
+    <main class="content">
+        <div class="page-title">Receipt Customization</div>
+        <div class="page-sub">Personalize the printed receipt</div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for cat, msg in messages %}<div class="alert {{ 'success' if cat=='success' else 'error' }}">{{ msg }}</div>{% endfor %}
+        {% endwith %}
+        <div class="panel">
+            <form method="POST">
+                <label>Store Name</label><input type="text" name="store_name" value="{{ settings.storeName }}">
+                <div style="height:14px"></div>
+                <label>Subtitle</label><input type="text" name="subtitle" value="{{ settings.subtitle }}">
+                <div style="height:14px"></div>
+                <label>Address</label><input type="text" name="address" value="{{ settings.address }}">
+                <div style="height:14px"></div>
+                <label>Contact</label><input type="text" name="contact" value="{{ settings.contact }}">
+                <div style="height:14px"></div>
+                <label>Footer Message</label><textarea name="footer">{{ settings.footer }}</textarea>
+                <div class="preview" id="preview"></div>
+                <div style="margin-top:18px;"><button class="btn" type="submit">Save Settings</button></div>
+            </form>
+        </div>
+    </main>
+    <script>
+        const s = {{ settings | tojson }};
+        const preview = document.getElementById('preview');
+        function render(){ preview.textContent = (s.storeName||'BREWPOS') + '\n' + (s.subtitle||'Coffee Shop POS') + (s.address?'\n'+s.address:'') + (s.contact?'\n'+s.contact:'') + '\n----------------\n' + (s.footer||''); }
+        render();
+        document.querySelectorAll('input,textarea').forEach(el => el.addEventListener('input', e => { s[e.target.name] = e.target.value; render(); }));
+    </script>
+</body>
+</html>
