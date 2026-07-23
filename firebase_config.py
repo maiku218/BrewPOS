@@ -1,8 +1,9 @@
 """BrewPOS - Firebase configuration and Admin SDK initialization.
 
-Loads the service-account credentials from firebase_credentials.json and
-initializes the Firebase Admin SDK used by the Flask backend to read/write
-Cloud Firestore and verify Google ID tokens.
+Loads the service-account credentials from the FIREBASE_CREDENTIALS_JSON
+environment variable (for deployment) or from firebase_credentials.json
+(for local development). Initializes the Firebase Admin SDK used by the
+Flask backend to read/write Cloud Firestore and verify Google ID tokens.
 """
 
 import os
@@ -41,11 +42,15 @@ _db = None
 
 
 def _load_credentials():
-    """Load service-account credentials from the JSON file."""
+    """Load service-account credentials from env var or JSON file."""
+    env_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if env_json:
+        return credentials.Certificate(json.loads(env_json))
     if not os.path.exists(CREDENTIALS_PATH):
         raise FileNotFoundError(
-            "firebase_credentials.json not found. Download the service-account "
-            "key from the Firebase console and place it in the project root."
+            "Firebase credentials not found. Set FIREBASE_CREDENTIALS_JSON "
+            "environment variable or place firebase_credentials.json in the "
+            "project root."
         )
     with open(CREDENTIALS_PATH, "r", encoding="utf-8") as fh:
         return credentials.Certificate(json.load(fh))
