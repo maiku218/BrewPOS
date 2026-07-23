@@ -9,6 +9,7 @@ Flask backend to read/write Cloud Firestore and verify Google ID tokens.
 import os
 import json
 import uuid
+import base64
 from io import BytesIO
 from datetime import datetime
 from dotenv import load_dotenv
@@ -43,14 +44,39 @@ _db = None
 
 def _load_credentials():
     """Load service-account credentials from env var or JSON file."""
+    env_b64 = os.environ.get("FIREBASE_CREDENTIALS_JSON_BASE64")
     env_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+
+    if env_b64:
+        try:
+            return credentials.Certificate(
+                json.loads(base64.b64decode(env_b64).decode("utf-8"))
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "FIREBASE_CREDENTIALS_JSON_BASE64 is invalid. "
+                "It must be a base64-encoded version of your service account JSON. "
+                "Error: " + str(exc)
+            ) from exc
+
     if env_json:
-        return credentials.Certificate(json.loads(env_json))
+        try:
+            return credentials.Certificate(json.loads(env_json))
+        except json.JSONDecodeError:
+            cleaned = env_json.replace('\\n', '\n').replace('\\"', '"').strip()
+            return credentials.Certificate(json.loads(cleaned))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "FIREBASE_CREDENTIALS_JSON is not valid JSON. "
+                "Paste the entire raw JSON content from your service account file "
+                "without editing. Error: " + str(exc)
+            ) from exc
+
     if not os.path.exists(CREDENTIALS_PATH):
         raise FileNotFoundError(
             "Firebase credentials not found. Set FIREBASE_CREDENTIALS_JSON "
-            "environment variable or place firebase_credentials.json in the "
-            "project root."
+            "or FIREBASE_CREDENTIALS_JSON_BASE64 environment variable, or "
+            "place firebase_credentials.json in the project root."
         )
     with open(CREDENTIALS_PATH, "r", encoding="utf-8") as fh:
         return credentials.Certificate(json.load(fh))
