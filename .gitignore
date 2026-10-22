@@ -6,4 +6,5 @@ firebase_credentials.json
 .env.local
 venv/
 client_secret*.json
+*-firebase-adminsdk-*.json
 
