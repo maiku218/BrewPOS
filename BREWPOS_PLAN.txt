@@ -1,0 +1,35 @@
+BrewPOS Professional Roadmap - Senior Planning
+=============================================
+
+1. Navigation (new structure)
+   - Dashboard (overview cards, quick actions)
+   - POS / Cashier (fast sale, cart, payment)
+   - Inventory (products, stock, low-stock alerts)
+   - Sales (history, receipts, refunds)
+   - Reports (daily/weekly/monthly, top products, cashier performance)
+   - Customers (profiles, loyalty)
+   - Settings (store info, users, roles, backup)
+
+2. Sold tracking
+   - Record every sale with items, quantities, prices, timestamps
+   - Per-product sold count aggregation
+   - Daily/weekly/monthly sold totals
+
+3. Coffee ranking (most sold)
+   - Leaderboard of top-selling coffee drinks
+   - Filter by date range
+   - Export ranking to CSV/PDF
+
+4. Additional professional features
+   - Role-based access (admin, manager, cashier)
+   - Audit logs for all actions
+   - Backup/restore database
+   - Multi-branch support
+   - Offline mode with sync
+   - Receipt printing integration
+   - Barcode scanning
+   - Customer loyalty points
+   - Tax and discount engine
+   - Dark mode and mobile-responsive UI
+   - Automated tests and CI/CD
+   - Firestore security rules

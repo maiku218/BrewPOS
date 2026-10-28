@@ -1,0 +1,57 @@
+BrewPOS AIMS/POS Coffee Shop - Missing Features & Improvements
+=============================================================
+
+1. Multi-tenant isolation (per Google account)
+   - Cashier records keyed by username only (global). Should be scoped by ownerId.
+   - Admin credentials hardcoded (admin/admin123) shared across accounts.
+   - Products/sales already filtered by ownerId; verify all collections (categories, store_settings, sales, stock_movements) are owner-scoped.
+
+2. Authentication & Security
+   - Passwords stored as hashes (good) but no password reset flow.
+   - No role-based permission granularity (admin vs cashier only).
+   - Session timeout / auto-logout missing.
+   - Google Sign-In token refresh not handled.
+
+3. Inventory / Stock
+   - No low-stock alerts / notifications.
+   - No batch/lot tracking or expiry alerts automation.
+   - Stock adjustments audit trail incomplete.
+   - No supplier / purchase order management.
+
+4. Sales / POS
+   - No offline mode / sync.
+   - No split payments / multiple payment methods.
+   - No discount / promo / coupon support.
+   - No tax calculation.
+   - Receipt printing not standardized (no printer integration).
+   - No void/refund workflow beyond cancel pending.
+
+5. Reporting / Analytics
+   - No daily/weekly/monthly sales reports.
+   - No best-selling products analytics.
+   - No cashier performance reports.
+   - No export to CSV/PDF.
+
+6. Customer Management
+   - No customer profiles / loyalty points.
+   - No order history per customer.
+
+7. Admin Tools
+   - No backup/restore.
+   - No multi-branch / multi-store support.
+   - No audit log for admin actions beyond login.
+
+8. UI/UX
+   - No dark mode.
+   - Mobile responsiveness gaps.
+   - No barcode scanner integration.
+
+9. Testing & Deployment
+   - No automated tests.
+   - No CI/CD pipeline.
+   - Environment config not validated on startup.
+
+10. Data Integrity
+    - Firestore rules not defined (open access risk).
+    - No input validation on all endpoints.
+    - No rate limiting on auth endpoints.

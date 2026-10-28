@@ -57,7 +57,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("BREWPOS_SECRET_KEY", "brewpos_secret_key")
 app.config['SESSION_PERMANENT'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30  # 30 days auto-login
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutes
 app.config['SESSION_COOKIE_NAME'] = 'brewpos_session'
 
 LOW_STOCK_THRESHOLD = LOW_STOCK_THRESHOLD
@@ -298,6 +298,31 @@ def admin_activity_logs():
     return render_template('admin_activity_logs.html', admin_logs=logs,
                            low_stock_count=low_stock_count, expiring_count=expiring_count,
                            active_main='dashboard', active_sub='activity_logs')
+
+
+# ---------------------------------------------------------------
+# Rankings (top-selling coffees)
+# ---------------------------------------------------------------
+@app.route('/rankings')
+@admin_required
+def rankings():
+    owner_id = _current_owner_id()
+    counts = {}
+    try:
+        sales = list(db.collection('sales').where('ownerId', '==', owner_id).stream())
+        for sale in sales:
+            items = list(sale.reference.collection('items').stream())
+            for it in items:
+                name = it.to_dict().get('name') or 'Unknown'
+                try:
+                    qty = int(it.to_dict().get('quantity', 0))
+                except (ValueError, TypeError):
+                    qty = 0
+                counts[name] = counts.get(name, 0) + qty
+    except Exception as e:
+        print(f"[RANKINGS] Error reading sales: {e}")
+    top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    return render_template('rankings.html', top=top, owner_id=owner_id)
 
 
 # ---------------------------------------------------------------
