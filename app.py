@@ -1206,6 +1206,57 @@ def api_update_product():
     return jsonify({'success': True, 'message': 'Product updated successfully!'})
 
 
+def _price_sale_item(item, owner_id):
+    if not isinstance(item, dict):
+        raise ValueError('Invalid cart item.')
+    product = product_repository.find_by_id(str(item.get('id', '')), owner_id=owner_id)
+    if product is None:
+        raise ValueError('A product in this cart is no longer available.')
+    try:
+        quantity = int(item.get('quantity', 0))
+        client_price = float(item.get('price', 0))
+    except (TypeError, ValueError):
+        raise ValueError('Invalid quantity or price.')
+    if quantity <= 0:
+        raise ValueError('Quantity must be greater than zero.')
+
+    requested_addons = item.get('addons', [])
+    if not isinstance(requested_addons, list) or len(set(requested_addons)) != len(requested_addons):
+        raise ValueError('Invalid add-ons selected.')
+    addon_prices = {}
+    for addon in product.addons or []:
+        if isinstance(addon, str):
+            addon_prices[addon] = 0.0
+        elif isinstance(addon, dict) and addon.get('name'):
+            addon_prices[str(addon['name'])] = float(addon.get('price', 0) or 0)
+    if any(addon not in addon_prices for addon in requested_addons):
+        raise ValueError('An add-on in this cart is no longer available.')
+    addons_total = sum(addon_prices[addon] for addon in requested_addons)
+
+    variants = product.variants or []
+    variant_name = str(item.get('variantName', ''))
+    if variants:
+        variant = next((v for v in variants if isinstance(v, dict) and v.get('name') == variant_name), None)
+        if variant is None:
+            raise ValueError('Choose a valid product size or variant.')
+        base_price = float(variant.get('price', 0))
+    else:
+        cup_size = item.get('cupSize', 'S')
+        if cup_size not in CUP_ADD:
+            raise ValueError('Choose a valid cup size.')
+        base_price = float(product.price) + CUP_ADD[cup_size]
+
+    expected_price = round(base_price + addons_total, 2)
+    if client_price < 0 or abs(client_price - expected_price) > 0.01:
+        raise ValueError('Price changed. Please refresh the menu and try again.')
+    item['price'] = expected_price
+    item['name'] = product.name + (f' ({variant_name})' if variants else (f" ({item.get('cupSize')})" if item.get('cupSize', 'S') != 'S' else ''))
+    if requested_addons:
+        item['name'] += ' + ' + ', '.join(requested_addons)
+    item['image'] = product.image_url or ''
+    return expected_price, quantity
+
+
 @app.route('/complete_sale', methods=['POST'])
 @cashier_required
 def complete_sale():
@@ -1225,7 +1276,7 @@ def complete_sale():
     total_amount = 0.0
     for item in items:
         try:
-            price = float(item.get('price', 0))
+            price, _ = _price_sale_item(item, _current_owner_id())
             qty = int(item.get('quantity', 0))
         except (TypeError, ValueError):
             return jsonify({'success': False, 'message': 'Invalid item data'})

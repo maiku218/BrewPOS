@@ -85,7 +85,46 @@
         .btn-secondary { background:var(--surface); color:var(--text); border-color:var(--border); }
         .btn-success { background:var(--success); color:#fff; }
         ::-webkit-scrollbar { width:6px; height:6px; } ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
-    </style>
+    
+        /* Refined POS layout and responsive behavior */
+        body { background: #f4f1eb; }
+        .header { padding: 14px 28px; background: rgba(255,255,255,.96); }
+        .brand { font-size: 22px; }
+        .layout { grid-template-columns: 68px minmax(0,1fr) 370px; gap: 18px; padding: 18px 28px; }
+        .left-nav, .stat-card, .products-panel, .cart-panel { border-radius: 16px; box-shadow: 0 8px 24px rgba(41,37,36,.06); }
+        .left-nav { padding: 12px 0; }
+        .nav-icon { width: 46px; height: 46px; transition: background .16s ease, color .16s ease, transform .16s ease; }
+        .nav-icon:hover { transform: translateY(-1px); }
+        .products-panel, .cart-panel { padding: 18px; }
+        .product-grid { grid-template-columns: repeat(auto-fill,minmax(145px,1fr)); gap: 12px; }
+        .product-card { border-radius: 14px; padding: 12px; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+        .product-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(120,53,15,.12); }
+        .pc-name { min-height: 2.4em; }
+        .cart-row { border: 1px solid transparent; }
+        .cart-row:hover { border-color: var(--border); }
+        button, a, input { font: inherit; }
+        button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid rgba(180,83,9,.35); outline-offset: 2px; }
+        @media (max-width: 1100px) {
+            .layout { grid-template-columns: 58px minmax(0,1fr); height: auto; min-height: calc(100vh - 60px); padding: 14px; }
+            .cart-panel { grid-column: 2; min-height: 340px; }
+            .main { min-height: 600px; }
+        }
+        @media (max-width: 680px) {
+            .header { padding: 12px 16px; gap: 10px; flex-wrap: wrap; }
+            .header-actions { width: 100%; justify-content: space-between; gap: 8px; }
+            .layout { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+            .left-nav { order: 0; flex-direction: row; justify-content: center; gap: 6px; padding: 8px; }
+            .nav-icon.logout { margin: 0 0 0 auto; }
+            .main { order: 1; min-height: 0; overflow: visible; }
+            .stat-bar { grid-template-columns: 1fr; gap: 10px; }
+            .products-panel { min-height: 480px; }
+            .product-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+            .cart-panel { order: 2; min-height: 360px; }
+            .selected-product { padding: 12px; }
+            .checkout-btn { position: sticky; bottom: 10px; box-shadow: 0 8px 22px rgba(124,45,18,.22); }
+        }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+        </style>
 </head>
 <body>
     <header class="header">
@@ -331,8 +370,8 @@
             const addonTotal = addonsTotal();
             const price = basePrice + addonTotal;
             const addonLabel = selectedAddons.length ? ` + ${selectedAddons.join(', ')}` : '';
-            const name = selectedProduct.name + (selectedCup!=='S' ? ` (${selectedCup})` : '') + addonLabel;
-            const existing = cart.findIndex(i => i.id===selectedProduct.id && i.cupSize===selectedCup && i.addons.join(',')===selectedAddons.join(','));
+            const variantName = selectedProduct.variants && selectedProduct.variants.length ? selectedProduct.variants[selectedVariantIndex].name : ''; const sizeLabel = variantName ? ` (${variantName})` : (selectedCup !== 'S' ? ` (${selectedCup})` : ''); const name = selectedProduct.name + sizeLabel + addonLabel;
+            const existing = cart.findIndex(i => i.id===selectedProduct.id && (i.variantName||'')===variantName && i.cupSize===selectedCup && i.addons.join(',')===selectedAddons.join(','));
             const inCart = existing>=0 ? cart[existing].quantity : 0;
             if(inCart + qty > selectedProduct.stock){ alert(`Only ${selectedProduct.stock - inCart} more available.`); return; }
             const imgSrc = selectedProduct.imageUrl || selectedProduct.image || '';
@@ -346,7 +385,7 @@
                         if (name) addonPriceMap[name] = price;
                     });
                 }
-                cart.push({ id:selectedProduct.id, name:name, baseName:selectedProduct.name, price:price, cupSize:selectedCup, quantity:qty, image:imgSrc, addons:[...selectedAddons], addonPrices: addonPriceMap });
+                cart.push({ id:selectedProduct.id, name:name, baseName:selectedProduct.name, price:price, variantName:variantName, cupSize:selectedCup, quantity:qty, image:imgSrc, addons:[...selectedAddons], addonPrices: addonPriceMap });
             }
             renderCart();
             document.getElementById('selected-product').classList.remove('show');

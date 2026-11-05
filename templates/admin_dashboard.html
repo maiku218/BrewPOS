@@ -44,7 +44,48 @@
         .badge.online { background: #dcfce7; color: #166534; }
         .badge.offline { background: #f1f5f9; color: #64748b; }
         .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    </style>
+    
+        /* Cleaner hierarchy, responsive admin navigation, and clearer surfaces */
+        body { background: #f3f0ea; }
+        .sidebar { box-shadow: 8px 0 28px rgba(41,37,36,.05); }
+        .sidebar-header { padding: 20px 18px; }
+        .brand-icon { border-radius: 12px; box-shadow: 0 6px 16px rgba(146,64,14,.2); }
+        .nav-item { border-radius: 0 10px 10px 0; margin-right: 10px; transition: background .16s ease, color .16s ease; }
+        .nav-item:hover { background: #f5f2ec; }
+        .content { max-width: 1680px; }
+        .page-title { letter-spacing: -.5px; }
+        .cards { gap: 14px; }
+        .card, .panel { border-radius: 16px; box-shadow: 0 8px 24px rgba(41,37,36,.05); }
+        .card { transition: transform .16s ease, box-shadow .16s ease; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(41,37,36,.09); }
+        .panel { padding: 22px; }
+        table { border-spacing: 0; }
+        th { background: #faf9f6; }
+        tbody tr:hover { background: #fcfbf8; }
+        @media (max-width: 900px) {
+            body { display: block; }
+            .sidebar { position: relative; width: 100%; height: auto; }
+            .sidebar-header { padding: 14px 18px; }
+            .nav-wrap { display: flex; align-items: center; overflow-x: auto; padding: 6px 8px 10px; }
+            .nav-section { display: none; }
+            .nav-item { flex: 0 0 auto; border-left: 0; border-radius: 9px; margin: 0 4px; padding: 9px 12px; }
+            .sidebar-footer { padding: 8px 14px 12px; }
+            .logout-btn { width: auto; margin-left: auto; padding: 8px 14px; }
+            .content { margin-left: 0; padding: 22px; min-height: 0; }
+            .two-col { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 560px) {
+            .content { padding: 16px 12px; }
+            .page-title { font-size: 22px; }
+            .cards { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+            .card { padding: 14px; }
+            .card-label { font-size: 10px; }
+            .card-value { font-size: 23px; }
+            .panel { padding: 14px; overflow-x: auto; }
+            table { min-width: 520px; }
+        }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+        </style>
 </head>
 <body>
     <aside class="sidebar">
