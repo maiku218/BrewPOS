@@ -30,6 +30,7 @@ from otp import (
     generate_otp, send_otp_email, store_otp, verify_otp,
     cleanup_expired_otps, can_resend,
 )
+from firebase_config import verify_id_token, get_firebase_web_config
 
 
 def _to_naive(dt):
@@ -278,6 +279,93 @@ def api_auth_register():
 
     redirect_url = url_for('admin_dashboard') if role == 'admin' else url_for('cashier_dashboard')
     return jsonify({'success': True, 'redirect': redirect_url})
+
+
+def _google_get_or_create_user(claims: dict) -> dict:
+    """Find an existing user by Google email, or create one from the ID token claims.
+
+    First Google account to sign in becomes the admin; subsequent accounts are cashiers.
+    Session is set by the caller so every Google account stays logged in.
+    """
+    email = claims.get('email')
+    google_id = claims.get('sub')
+    display_name = claims.get('name') or claims.get('email') or 'Google User'
+    if not email or not google_id:
+        return None
+
+    user = auth_service.get_user_by_email(email)
+    if user:
+        return user
+
+    row_count = query_one("SELECT COUNT(*) AS cnt FROM users")
+    existing_count = int(row_count['cnt']) if row_count else 0
+    role = 'admin' if existing_count == 0 else 'cashier'
+
+    user_id = str(uuid.uuid4())
+    execute(
+        "INSERT INTO users (id, email, password_hash, display_name, role, status, "
+        "provider, google_id, owner_id, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            user_id, email, None, display_name, role, 'active',
+            'google', google_id, None, now(), now(),
+        ),
+    )
+    user = auth_service.get_user_by_id(user_id)
+    if not user:
+        return None
+
+    if role == 'admin':
+        execute("UPDATE users SET owner_id = id WHERE id = %s", (user_id,))
+    else:
+        admin = query_one("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+        if admin:
+            execute("UPDATE users SET owner_id = %s WHERE id = %s", (admin['id'], user_id))
+
+    return auth_service.get_user_by_id(user_id)
+
+
+@app.route('/api/auth/google_login', methods=['POST'])
+def api_auth_google_login():
+    """Sign in with a Google ID token. Verifies the token, finds/creates the user,
+    and establishes a session so the Google account stays logged in."""
+    data = request.get_json(silent=True) or {}
+    id_token = data.get('id_token', '')
+    if not id_token:
+        return jsonify({'success': False, 'message': 'Google ID token is required.'}), 400
+
+    claims = verify_id_token(id_token)
+    if not claims:
+        return jsonify({'success': False, 'message': 'Invalid Google ID token.'}), 401
+
+    email = claims.get('email')
+    if not email:
+        return jsonify({'success': False, 'message': 'Google account has no email.'}), 400
+
+    user = _google_get_or_create_user(claims)
+    if not user:
+        return jsonify({'success': False, 'message': 'Failed to create Google account.'}), 500
+
+    session.clear()
+    session.update(auth_service.get_session_data(user))
+    session['user_email'] = user.get('email')
+    session['user_display_name'] = user.get('display_name')
+    session['auth_provider'] = 'google'
+    session.permanent = True
+
+    if user.get('role') == 'admin':
+        _log_admin_activity('Google Sign-In', f'Admin {user.get("email")} signed in via Google')
+    else:
+        _log_cashier_activity('Google Sign-In', f'Cashier {user.get("email")} signed in via Google')
+
+    redirect_url = url_for('admin_dashboard') if user.get('role') == 'admin' else url_for('cashier_dashboard')
+    return jsonify({'success': True, 'redirect': redirect_url, 'role': user.get('role'), 'email': email})
+
+
+@app.route('/api/auth/firebase-config', methods=['GET'])
+def api_auth_firebase_config():
+    """Return the public Firebase web config for the client-side Google Sign-In SDK."""
+    return jsonify(get_firebase_web_config())
 
 
 @app.route('/api/auth/send_otp', methods=['POST'])

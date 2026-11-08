@@ -12,5 +12,8 @@ python-dotenv==1.0.1
 # Resend API for transactional email (OTP delivery)
 resend==2.51.0
 
+# Firebase Admin SDK (Google ID token verification for Sign-In with Google)
+firebase-admin==6.2.0
+
 # Production server
 gunicorn==21.2.0

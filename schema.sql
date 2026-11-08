@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
     display_name    VARCHAR(255) NOT NULL,
     role            VARCHAR(50) NOT NULL DEFAULT 'cashier' CHECK (role IN ('admin', 'cashier')),
     status          VARCHAR(50) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    provider        VARCHAR(50) NOT NULL DEFAULT 'local' CHECK (provider IN ('local', 'google')),
+    google_id       VARCHAR(255),
     owner_id        VARCHAR(255),
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -34,6 +36,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_provider ON users(provider);
+CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 
 -- ---------------------------------------------------------------------------
 -- categories
