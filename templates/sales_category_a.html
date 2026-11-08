@@ -83,7 +83,7 @@
                 <thead><tr><th>Receipt No.</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
                 <tbody>
                     {% for s in sales %}
-                    <tr><td>{{ s.receiptNo }}</td><td>{{ s.date }}</td><td>₱{{ "%.2f"|format(s.total) }}</td><td>{{ s.status }}</td></tr>
+                    <tr><td>{{ s.receipt_no }}</td><td>{{ s.date }}</td><td>₱{{ "%.2f"|format(s.total) }}</td><td>{{ s.status }}</td></tr>
                     {% else %}
                     <tr><td colspan="4" style="color:var(--muted)">No coffee sales recorded.</td></tr>
                     {% endfor %}

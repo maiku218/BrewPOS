@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrewPOS - Coffee Shop POS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #4c1d0f 0%, #7c2d12 50%, #b45309 100%);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            color: #fff;
+        }
+        .login-card {
+            background: #fff; color: #1c1917; border-radius: 20px; padding: 48px 40px;
+            width: 100%; max-width: 420px; box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+            text-align: center;
+        }
+        .logo {
+            width: 80px; height: 80px; background: linear-gradient(135deg, #92400e, #b45309);
+            border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center;
+            justify-content: center; font-size: 40px;
+        }
+        .brand { font-size: 32px; font-weight: 900; letter-spacing: -1px; color: #7c2d12; }
+        .brand span { color: #b45309; }
+        .subtitle { color: #78716c; margin: 6px 0 28px; font-size: 14px; }
+        .form-group { margin-bottom: 16px; text-align: left; }
+        .form-label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #78716c; letter-spacing: .5px; margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 12px 14px; border: 1px solid #d6d3d1; border-radius: 10px; background: #fff; color: #1c1917; font-size: 15px; font-weight: 600; outline: none; }
+        .form-input:focus { border-color: #b45309; }
+        .btn {
+            width: 100%; padding: 14px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #b45309, #92400e); color: #fff;
+            font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        }
+        .btn:hover { opacity: .9; }
+        .btn:disabled { opacity: 0.6; cursor: default; }
+        .btn-outline {
+            width: 100%; padding: 14px; border: 1px solid #d6d3d1; border-radius: 10px;
+            background: #fff; color: #78716c; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.15s; margin-top: 10px;
+        }
+        .btn-outline:hover { background: #f7f5f4; }
+        .divider { display: flex; align-items: center; text-align: center; margin: 22px 0; color: #a8a29e; font-size: 12px; }
+        .divider::before, .divider::after { content: ''; flex: 1; border-bottom: 1px solid #d6d3d1; }
+        .divider span { padding: 0 10px; }
+        .register-link { font-size: 13px; color: #78716c; margin-top: 16px; }
+        .register-link a { color: #b45309; text-decoration: none; font-weight: 600; }
+        .register-link a:hover { text-decoration: underline; }
+        #error { color: #dc2626; font-size: 13px; margin-top: 14px; min-height: 18px; }
+        #otpError { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 18px; }
+        #regError { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 18px; }
+        .note { font-size: 12px; color: #a8a29e; margin-top: 22px; line-height: 1.5; }
+        .success-msg { color: #16a34a; font-size: 13px; margin-top: 10px; min-height: 18px; }
+
+        /* OTP specific */
+        .otp-section { display: none; margin-top: 20px; padding: 20px; background: #fdf4e7; border-radius: 12px; border: 1px solid #f3e3c8; }
+        .otp-section h4 { margin: 0 0 12px 0; font-size: 17px; color: #7c2d12; }
+        .otp-email { font-size: 13px; color: #78716c; margin-bottom: 14px; word-break: break-all; }
+        .otp-row { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; }
+        .otp-input { width: 48px; height: 52px; text-align: center; font-size: 24px; font-weight: 700; border: 2px solid #d6d3d1; border-radius: 10px; background: #fff; color: #1c1917; outline: none; }
+        .otp-input:focus { border-color: #b45309; }
+        .otp-input.filled { border-color: #b45309; background: #fdf4e7; }
+        .btn-otp { padding: 10px 18px; background: #e7e5e4; color: #1c1917; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
+        .btn-otp:hover { background: #d6d3d1; }
+        .btn-otp:disabled { opacity: 0.6; cursor: default; }
+        .btn-resend { background: none; border: none; color: #b45309; font-weight: 700; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; }
+        .btn-resend:disabled { color: #a8a29e; cursor: default; text-decoration: none; }
+        #otpTimer { font-size: 12px; color: #a8a29e; margin-top: 8px; min-height: 16px; }
+        #otpResendHint { font-size: 12px; color: #a8a29e; margin-top: 6px; min-height: 16px; }
+        .switch-link { font-size: 13px; color: #b45309; text-decoration: none; font-weight: 600; cursor: pointer; margin-top: 14px; display: inline-block; }
+        .switch-link:hover { text-decoration: underline; }
+        .purpose-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
+        .purpose-btn { flex: 1; padding: 10px; border: 1px solid #d6d3d1; border-radius: 8px; background: #fff; color: #78716c; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .purpose-btn.active { background: #b45309; color: #fff; border-color: #b45309; }
+        .open-gmail { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+        .loader { display: inline-block; width: 16px; height: 16px; border: 2px solid #d6d3d1; border-top-color: #b45309; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .btn.loading { pointer-events: none; opacity: 0.85; position: relative; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="logo">☕</div>
+        <div class="brand">BREW<span>POS</span></div>
+        <div class="subtitle">Coffee Shop POS &amp; Inventory System</div>
+
+        <!-- Password Login Form -->
+        <form id="loginForm" onsubmit="return handleLogin(event)">
+            <div class="form-group">
+                <label class="form-label">Email</label>
+                <input type="email" id="loginEmail" class="form-input" placeholder="you@brewpos.local" autocomplete="email" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" id="loginPassword" class="form-input" placeholder="••••••••" autocomplete="current-password" required>
+            </div>
+            <div id="error"></div>
+            <button class="btn" id="loginBtn" type="submit">Sign In</button>
+        </form>
+
+        <div class="switch-link" id="showOtpLink" style="margin-top:14px;">Use OTP (email code) instead</div>
+
+        <!-- OTP Login / Register Form -->
+        <form id="otpForm" class="otp-section" onsubmit="return handleOtpVerify(event)">
+            <h4 id="otpStepTitle">OTP Verification</h4>
+
+            <!-- Step 1: Request OTP -->
+            <div id="otpStepRequest">
+                <div class="form-group">
+                    <label class="form-label">Email address</label>
+                    <input type="email" id="otpEmail" class="form-input" placeholder="you@brewpos.local" autocomplete="email" required>
+                </div>
+                <div class="purpose-toggle">
+                    <button type="button" class="purpose-btn active" id="otpPurposeLogin" onclick="setOtpPurpose('login')">Log in</button>
+                    <button type="button" class="purpose-btn" id="otpPurposeRegister" onclick="setOtpPurpose('register')">Create account</button>
+                </div>
+                <div id="otpReqError" style="color:#dc2626;font-size:13px;margin-top:8px;min-height:18px;"></div>
+                <button class="btn" id="sendOtpBtn" type="button" onclick="sendOtp()">Get OTP Code</button>
+                <div id="otpResendHint"></div>
+            </div>
+
+            <!-- Step 2: Verify OTP -->
+            <div id="otpStepVerify" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #f3e3c8;">
+                <div class="otp-email" id="otpVerifyEmail"></div>
+                <div class="form-group" style="text-align:center;margin-bottom:10px;">
+                    <label class="form-label">Enter 6-digit code</label>
+                </div>
+                <div class="otp-row" id="otpInputs">
+                    <input type="text" class="otp-input" maxlength="1" id="otp1" inputmode="numeric" required>
+                    <input type="text" class="otp-input" maxlength="1" id="otp2" inputmode="numeric" required>
+                    <input type="text" class="otp-input" maxlength="1" id="otp3" inputmode="numeric" required>
+                    <input type="text" class="otp-input" maxlength="1" id="otp4" inputmode="numeric" required>
+                    <input type="text" class="otp-input" maxlength="1" id="otp5" inputmode="numeric" required>
+                    <input type="text" class="otp-input" maxlength="1" id="otp6" inputmode="numeric" required>
+                </div>
+                <div id="otpError"></div>
+                <button class="btn" id="otpVerifyBtn" type="submit">Verify OTP</button>
+                <div class="open-gmail" style="margin-top:10px;">
+                    <button type="button" class="btn-resend" id="openGmailBtn" onclick="openGmail()" title="Open Gmail in a new tab">Open Gmail</button>
+                </div>
+                <div id="otpTimer"></div>
+                <button type="button" class="btn-resend" id="resendOtpBtn" onclick="resendOtp()" style="margin-top:8px;">Didn't receive it? Resend OTP</button>
+                <div id="otpResendHint2"></div>
+            </div>
+
+            <!-- Step 3: Complete Registration (register purpose only) -->
+            <div id="otpStepRegister" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #f3e3c8;">
+                <div class="form-group">
+                    <label class="form-label">Full Name</label>
+                    <input type="text" id="regName" class="form-input" placeholder="Juan Dela Cruz" autocomplete="name" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" id="regPassword" class="form-input" placeholder="••••••••" autocomplete="new-password" required>
+                </div>
+                <div id="regError"></div>
+                <button class="btn" id="regCompleteBtn" type="button" onclick="completeRegister()">Create Account</button>
+            </div>
+        </form>
+
+        <div class="switch-link" id="showPasswordLink" style="display:none;margin-top:14px;">Use password instead</div>
+
+        <div class="divider"><span>Or create an account</span></div>
+
+        <form id="registerForm" style="display:none" onsubmit="return handleRegister(event)">
+            <div class="form-group">
+                <label class="form-label">Full Name</label>
+                <input type="text" id="regNameStandalone" class="form-input" placeholder="Juan Dela Cruz" autocomplete="name" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email</label>
+                <input type="email" id="regEmailStandalone" class="form-input" placeholder="you@brewpos.local" autocomplete="email" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" id="regPasswordStandalone" class="form-input" placeholder="••••••••" autocomplete="new-password" required>
+            </div>
+            <div id="regErrorStandalone" style="color:#dc2626;font-size:13px;margin-top:8px;min-height:18px;"></div>
+            <button class="btn" id="regBtnStandalone" type="submit">Create Account</button>
+        </form>
+
+        <div class="register-link" id="toggleLink">
+            <a href="#" onclick="toggleForm('register')">Create an account</a>
+        </div>
+        <div class="register-link" id="toggleBack" style="display:none;margin-top:16px;">
+            <a href="#" onclick="toggleForm('login')">Back to sign in</a>
+        </div>
+
+        <div class="note">
+            Sign in with your BrewPOS account to access the POS.<br>
+            The first registered account becomes the store administrator.<br>
+            Email OTP verification is required for new account registration.
+        </div>
+    </div>
+
+    <script>
+        /* ---------- State ---------- */
+        let otpPurpose = 'login';
+        let otpEmailValue = '';
+        let resendTimer = null;
+        let resendRemaining = 0;
+
+        /* ---------- Helpers ---------- */
+        function show(el) { el.style.display = 'block'; }
+        function hide(el) { el.style.display = 'none'; }
+
+        function setOtpError(msg) {
+            const el = document.getElementById('otpReqError');
+            el.textContent = msg || '';
+        }
+        function setOtpVerifyError(msg) {
+            const el = document.getElementById('otpError');
+            el.textContent = msg || '';
+        }
+        function setRegError(msg) {
+            const el = document.getElementById('regError');
+            el.textContent = msg || '';
+        }
+
+        function setOtpPurpose(purpose) {
+            otpPurpose = purpose;
+            document.getElementById('otpPurposeLogin').classList.toggle('active', purpose === 'login');
+            document.getElementById('otpPurposeRegister').classList.toggle('active', purpose === 'register');
+            document.getElementById('otpStepTitle').textContent = purpose === 'register' ? 'Create Account' : 'Log In';
+            setOtpError('');
+        }
+
+        /* ---------- Password login ---------- */
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const err = document.getElementById('error');
+            err.textContent = '';
+            btn.disabled = true;
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            try {
+                const resp = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    err.textContent = data.message || 'Sign-in failed.';
+                    btn.disabled = false;
+                }
+            } catch (err2) {
+                err.textContent = err2.message || 'Sign-in failed.';
+                btn.disabled = false;
+            }
+            return false;
+        }
+
+        /* ---------- Password register (standalone, kept) ---------- */
+        async function handleRegister(e) {
+            e.preventDefault();
+            const btn = document.getElementById('regBtnStandalone');
+            const err = document.getElementById('regErrorStandalone');
+            err.textContent = '';
+            btn.disabled = true;
+            const name = document.getElementById('regNameStandalone').value;
+            const email = document.getElementById('regEmailStandalone').value;
+            const password = document.getElementById('regPasswordStandalone').value;
+            try {
+                const resp = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, display_name: name }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    err.textContent = data.message || 'Registration failed.';
+                    btn.disabled = false;
+                }
+            } catch (err2) {
+                err.textContent = err2.message || 'Registration failed.';
+                btn.disabled = false;
+            }
+            return false;
+        }
+
+        /* ---------- OTP flow ---------- */
+        async function sendOtp() {
+            const btn = document.getElementById('sendOtpBtn');
+            const errEl = document.getElementById('otpReqError');
+            const hintEl = document.getElementById('otpResendHint');
+            errEl.textContent = '';
+            hintEl.textContent = '';
+            const email = document.getElementById('otpEmail').value;
+            if (!email) {
+                errEl.textContent = 'Please enter your email address.';
+                return;
+            }
+            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+                errEl.textContent = 'Please enter a valid email address.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const resp = await fetch('/api/auth/send_otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, purpose: otpPurpose }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    otpEmailValue = email;
+                    btn.disabled = true;
+                    btn.textContent = 'OTP Sent';
+                    show(document.getElementById('otpStepVerify'));
+                    hide(document.getElementById('otpStepRequest'));
+                    if (otpPurpose === 'register') {
+                        hide(document.getElementById('otpStepRegister'));
+                    }
+                    document.getElementById('otpVerifyEmail').textContent = 'Code sent to ' + email;
+                    clearInputs();
+                    document.getElementById('otp1').focus();
+                    startResendCooldown(data.cooldown_seconds || 60);
+                } else {
+                    errEl.textContent = data.message || 'Failed to send OTP.';
+                    btn.disabled = false;
+                    btn.textContent = 'Get OTP Code';
+                    if (data.cooldown_seconds) {
+                        startResendCooldown(data.cooldown_seconds);
+                    }
+                }
+            } catch (e) {
+                errEl.textContent = e.message || 'Failed to send OTP.';
+                btn.disabled = false;
+                btn.textContent = 'Get OTP Code';
+            }
+            return false;
+        }
+
+        function startResendCooldown(seconds) {
+            resendRemaining = seconds;
+            const btn = document.getElementById('resendOtpBtn');
+            const hint = document.getElementById('otpResendHint2');
+            if (resendTimer) clearInterval(resendTimer);
+            btn.disabled = true;
+            btn.textContent = `Resend OTP (${resendRemaining}s)`;
+            resendTimer = setInterval(() => {
+                resendRemaining--;
+                if (resendRemaining <= 0) {
+                    clearInterval(resendTimer);
+                    resendTimer = null;
+                    btn.disabled = false;
+                    btn.textContent = 'Didn\'t receive it? Resend OTP';
+                    hint.textContent = '';
+                } else {
+                    btn.textContent = `Resend OTP (${resendRemaining}s)`;
+                    hint.textContent = `Please wait ${resendRemaining}s before resending.`;
+                }
+            }, 1000);
+        }
+
+        async function resendOtp() {
+            sendOtp();
+        }
+
+        function openGmail() {
+            window.open('https://mail.google.com/', '_blank');
+        }
+
+        /* OTP digit inputs: auto-advance and paste handling */
+        const otpInputs = ['otp1','otp2','otp3','otp4','otp5','otp6'];
+        otpInputs.forEach((id, idx) => {
+            const el = document.getElementById(id);
+            el.addEventListener('input', function(e) {
+                const val = this.value.replace(/\D/g, '');
+                this.value = val;
+                if (val) {
+                    this.classList.add('filled');
+                    if (idx < otpInputs.length - 1) {
+                        document.getElementById(otpInputs[idx + 1]).focus();
+                    }
+                }
+            });
+            el.addEventListener('keydown', function(e) {
+                if (e.key === 'Backspace') {
+                    this.value = '';
+                    this.classList.remove('filled');
+                    if (idx > 0) document.getElementById(otpInputs[idx - 1]).focus();
+                }
+                if (e.key === 'ArrowLeft' && idx > 0) document.getElementById(otpInputs[idx - 1]).focus();
+                if (e.key === 'ArrowRight' && idx < otpInputs.length - 1) document.getElementById(otpInputs[idx + 1]).focus();
+            });
+            el.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const paste = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '').slice(0, 6);
+                for (let i = 0; i < 6; i++) {
+                    const input = document.getElementById(otpInputs[i]);
+                    input.value = paste[i] || '';
+                    input.classList.toggle('filled', !!paste[i]);
+                }
+                const lastFilled = otpInputs.findIndex((id2, i2) => {
+                    const input = document.getElementById(id2);
+                    return input.value === '' || i2 === 5;
+                });
+                const focusIdx = Math.min(lastFilled === -1 ? 5 : lastFilled, 5);
+                document.getElementById(otpInputs[focusIdx]).focus();
+            });
+        });
+
+        function clearInputs() {
+            otpInputs.forEach(id => {
+                const el = document.getElementById(id);
+                el.value = '';
+                el.classList.remove('filled');
+            });
+            document.getElementById('otp1').focus();
+        }
+
+        function getOtpCode() {
+            return otpInputs.map(id => document.getElementById(id).value).join('');
+        }
+
+        async function handleOtpVerify(e) {
+            e.preventDefault();
+            const btn = document.getElementById('otpVerifyBtn');
+            const errEl = document.getElementById('otpError');
+            errEl.textContent = '';
+            const code = getOtpCode();
+            if (code.length !== 6) {
+                errEl.textContent = 'Please enter all 6 digits.';
+                return;
+            }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loader"></span>Verifying...';
+            try {
+                const resp = await fetch('/api/auth/verify_otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: otpEmailValue, code, purpose: otpPurpose }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    if (otpPurpose === 'login') {
+                        window.location.href = data.redirect;
+                    } else {
+                        // register: proceed to set password/display name
+                        show(document.getElementById('otpStepRegister'));
+                        hide(document.getElementById('otpStepVerify'));
+                        document.getElementById('regName').focus();
+                    }
+                } else {
+                    errEl.textContent = data.message || 'OTP verification failed.';
+                    btn.disabled = false;
+                    btn.textContent = 'Verify OTP';
+                }
+            } catch (err2) {
+                errEl.textContent = err2.message || 'OTP verification failed.';
+                btn.disabled = false;
+                btn.textContent = 'Verify OTP';
+            }
+            return false;
+        }
+
+        async function completeRegister() {
+            const btn = document.getElementById('regCompleteBtn');
+            const errEl = document.getElementById('regError');
+            errEl.textContent = '';
+            const name = document.getElementById('regName').value;
+            const password = document.getElementById('regPassword').value;
+            if (!name || !password) {
+                errEl.textContent = 'Please fill in all fields.';
+                return;
+            }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loader"></span>Creating...';
+            try {
+                const resp = await fetch('/api/auth/register_complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: otpEmailValue, password, display_name: name }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    window.location.href = data.redirect;
+                } else {
+                    errEl.textContent = data.message || 'Registration failed.';
+                    btn.disabled = false;
+                    btn.textContent = 'Create Account';
+                }
+            } catch (err2) {
+                errEl.textContent = err2.message || 'Registration failed.';
+                btn.disabled = false;
+                btn.textContent = 'Create Account';
+            }
+        }
+
+        /* ---------- Form switching ---------- */
+        function toggleForm(form) {
+            document.getElementById('loginForm').style.display = form === 'login' ? 'block' : 'none';
+            document.getElementById('registerForm').style.display = form === 'register' ? 'block' : 'none';
+            document.getElementById('otpForm').style.display = 'none';
+            document.getElementById('toggleLink').style.display = form === 'login' ? 'block' : 'none';
+            document.getElementById('toggleBack').style.display = form === 'register' ? 'block' : 'none';
+            document.getElementById('showOtpLink').style.display = form === 'login' ? 'inline-block' : 'none';
+            document.getElementById('showPasswordLink').style.display = 'none';
+            document.getElementById('error').textContent = '';
+            document.getElementById('regErrorStandalone').textContent = '';
+            document.getElementById('otpError').textContent = '';
+            document.getElementById('otpReqError').textContent = '';
+            document.getElementById('regError').textContent = '';
+        }
+
+        document.getElementById('showOtpLink').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('otpForm').style.display = 'block';
+            document.getElementById('toggleLink').style.display = 'none';
+            document.getElementById('toggleBack').style.display = 'none';
+            document.getElementById('showOtpLink').style.display = 'none';
+            document.getElementById('showPasswordLink').style.display = 'inline-block';
+            document.getElementById('error').textContent = '';
+            document.getElementById('otpError').textContent = '';
+            show(document.getElementById('otpStepRequest'));
+            hide(document.getElementById('otpStepVerify'));
+            hide(document.getElementById('otpStepRegister'));
+            clearInputs();
+            setOtpPurpose('login');
+        });
+
+        document.getElementById('showPasswordLink').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('registerForm').style.display = 'none';
+            document.getElementById('otpForm').style.display = 'none';
+            document.getElementById('toggleLink').style.display = 'block';
+            document.getElementById('toggleBack').style.display = 'none';
+            document.getElementById('showOtpLink').style.display = 'inline-block';
+            document.getElementById('showPasswordLink').style.display = 'none';
+            document.getElementById('error').textContent = '';
+            document.getElementById('otpError').textContent = '';
+        });
+    </script>
+</body>
+</html>

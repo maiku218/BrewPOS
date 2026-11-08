@@ -1,210 +1,143 @@
-"""BrewPOS - Service layer for Firestore.
+"""BrewPOS - Service layer for PostgreSQL.
 
-Implements the abstraction interfaces (IAuthService, ISalesService) and the
-ProductRepository which hides all Firestore access behind OOP models.
+Replaces services.py (Firestore). Implements the same abstraction interfaces
+(IAuthService, ISalesService) and ProductRepository, but all data access is
+now parameterized SQL against PostgreSQL via db.py.
 """
 
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict
 import random
+import uuid
 from datetime import datetime, timedelta
 
-from firebase_config import get_db, LOW_STOCK_THRESHOLD
+from werkzeug.security import generate_password_hash, check_password_hash
+
+from db import (
+    get_connection, transaction, query_all, query_one, execute,
+    execute_returning, now, LOW_STOCK_THRESHOLD, EXPIRING_DAYS,
+)
 from models import (
     User, Admin, Cashier, Product, StockMovement,
     StockInProcessor, StockOutProcessor, get_movement_processor,
 )
 
 
-# ================================================
+# ============================================================================
 # ABSTRACTION: Service interfaces
-# ================================================
+# ============================================================================
 
 class IAuthService(ABC):
     @abstractmethod
-    def verify_google_user(self, id_token: str) -> Optional[dict]:
+    def authenticate(self, email: str, password: str) -> Optional[dict]:
         ...
 
     @abstractmethod
-    def get_or_create_user(self, claims: dict) -> dict:
+    def create_user(self, email: str, password: str, display_name: str,
+                    role: str = 'cashier') -> Optional[dict]:
         ...
 
     @abstractmethod
-    def get_session_data(self, user_doc: dict) -> dict:
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        ...
+
+    @abstractmethod
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        ...
+
+    @abstractmethod
+    def get_session_data(self, user: dict) -> dict:
         ...
 
 
 class ISalesService(ABC):
     @abstractmethod
-    def process_sale(self, items: list, cashier_id: str) -> dict:
+    def process_sale(self, items: list, cashier_id: str, owner_id: str) -> dict:
+        ...
+
+    @abstractmethod
+    def mark_receipt_printed(self, receipt_number: str, owner_id: str) -> bool:
+        ...
+
+    @abstractmethod
+    def cancel_pending_sale(self, receipt_number: str, owner_id: str) -> bool:
         ...
 
 
-# ================================================
+# ============================================================================
 # IMPLEMENTATIONS
-# ================================================
+# ============================================================================
 
 class AuthService(IAuthService):
-    """Handles Google Sign-In verification and user document management."""
+    """Handles local email/password authentication and user management."""
 
-    def verify_google_user(self, id_token: str) -> Optional[dict]:
-        """Verify a Google ID token, returning decoded claims or None."""
-        try:
-            from firebase_config import verify_id_token
-            return verify_id_token(id_token)
-        except Exception as e:
-            print(f"[AUTH] Token verification failed: {type(e).__name__}: {e}")
+    def authenticate(self, email: str, password: str) -> Optional[dict]:
+        """Verify email/password and return the user dict, or None."""
+        user = self.get_user_by_email(email)
+        if not user:
             return None
+        password_hash = user.get('password_hash')
+        if not password_hash or not check_password_hash(password_hash, password):
+            return None
+        if user.get('status') != 'active':
+            return None
+        return user
 
-    def get_or_create_user(self, claims: dict) -> dict:
-        """Create the user doc on first Google sign-in; each new Google account gets its own workspace."""
-        db = get_db()
-        uid = claims.get('uid') or claims.get('sub')
-        email = claims.get('email', '')
-        display_name = claims.get('name', email.split('@')[0] if email else 'User')
+    def create_user(self, email: str, password: str, display_name: str,
+                    role: str = 'cashier') -> Optional[dict]:
+        """Create a new user. Returns the user dict or None if email exists."""
+        existing = self.get_user_by_email(email)
+        if existing:
+            return None
+        user_id = str(uuid.uuid4())
+        password_hash = generate_password_hash(password)
+        try:
+            execute(
+                "INSERT INTO users (id, email, password_hash, display_name, role, status, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (user_id, email, password_hash, display_name, role, 'active', now(), now()),
+            )
+        except Exception:
+            return None
+        return self.get_user_by_id(user_id)
 
-        user_ref = db.collection('users').document(uid)
-        user_doc = user_ref.get()
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        return query_one(
+            "SELECT id, email, password_hash, display_name, role, status, created_at, updated_at "
+            "FROM users WHERE id = %s", (user_id,)
+        )
 
-        if user_doc.exists:
-            existing = user_doc.to_dict()
-            if 'ownerId' not in existing:
-                user_ref.update({'ownerId': uid})
-                existing['ownerId'] = uid
-            return existing
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        return query_one(
+            "SELECT id, email, password_hash, display_name, role, status, created_at, updated_at "
+            "FROM users WHERE email = %s", (email,)
+        )
 
-        user_data = {
-            'uid': uid,
-            'email': email,
-            'displayName': display_name,
-            'role': 'admin',
-            'status': 'active',
-            'createdAt': datetime.now(),
-            'ownerId': uid,
-        }
-        user_ref.set(user_data)
-        return user_data
-
-    def get_session_data(self, user_doc: dict) -> dict:
-        if user_doc.get('role') == 'admin':
+    def get_session_data(self, user: dict) -> dict:
+        if user.get('role') == 'admin':
             return {
-                'admin_user': user_doc.get('email'),
-                'admin_id': user_doc.get('uid'),
+                'admin_user': user.get('email'),
+                'admin_id': user.get('id'),
                 'role': 'admin',
             }
         return {
-            'cashier_user': user_doc.get('email'),
-            'cashier_id': user_doc.get('uid'),
+            'cashier_user': user.get('email'),
+            'cashier_id': user.get('id'),
             'role': 'cashier',
         }
 
 
 class ProductRepository:
-    """Hides all Firestore access; clients work with Product objects."""
+    """Hides all PostgreSQL access; clients work with Product objects."""
 
-    def __init__(self, db=None):
-        self.db = db or get_db()
+    def __init__(self):
+        pass
 
-    def find_by_id(self, product_id: str, owner_id: Optional[str] = None) -> Optional[Product]:
-        doc = self.db.collection('products').document(product_id).get()
-        if not doc.exists:
-            return None
-        product = self._doc_to_product(doc)
-        if owner_id and product.owner_id != owner_id:
-            return None
-        return product
-
-    def find_by_barcode(self, barcode: str, owner_id: Optional[str] = None) -> Optional[Product]:
-        query = self.db.collection('products').where('barcode', '==', barcode).limit(1).stream()
-        for doc in query:
-            product = self._doc_to_product(doc)
-            if owner_id and product.owner_id != owner_id:
-                continue
-            return product
-        return None
-
-    def find_all(self, owner_id: Optional[str] = None) -> List[Product]:
-        if not owner_id:
-            raise ValueError("owner_id is required for find_all")
-        docs = self.db.collection('products').where('ownerId', '==', owner_id).stream()
-        products = [self._doc_to_product(d) for d in docs]
-        products.sort(key=lambda p: p.name)
-        return products
-
-    def find_in_stock(self, owner_id: Optional[str] = None) -> List[Product]:
-        return [p for p in self.find_all(owner_id) if p.stock_quantity > 0]
-
-    def find_low_stock(self, threshold: int = LOW_STOCK_THRESHOLD, owner_id: Optional[str] = None) -> List[Product]:
-        return [p for p in self.find_all(owner_id) if p.is_low_stock]
-
-    def save(self, product: Product, product_id: Optional[str] = None):
-        if product_id:
-            self.db.collection('products').document(product_id).set(product.to_dict())
-            return product_id
-        _, ref = self.db.collection('products').add(product.to_dict())
-        return ref.id
-
-    def save_from_dict(self, data: dict, product_id: Optional[str] = None):
-        if product_id:
-            self.db.collection('products').document(product_id).set(data)
-            return product_id
-        _, ref = self.db.collection('products').add(data)
-        return ref.id
-
-    def update(self, product_id: str, data: dict):
-        self.db.collection('products').document(product_id).update(data)
-
-    def delete(self, product_id: str):
-        self.db.collection('products').document(product_id).delete()
-
-    def count_low_stock(self, threshold: int = LOW_STOCK_THRESHOLD, owner_id: Optional[str] = None) -> int:
-        return len(self.find_low_stock(threshold, owner_id))
-
-    def count_expiring(self, days: int, owner_id: Optional[str] = None) -> int:
-        threshold = datetime.now() + timedelta(days=days)
-        count = 0
-        for doc in self.db.collection('products').stream():
-            data = doc.to_dict()
-            if owner_id and data.get('ownerId') != owner_id:
-                continue
-            exp = data.get('expirationDate')
-            if isinstance(exp, datetime) and exp <= threshold:
-                count += 1
-            elif exp:
-                try:
-                    if datetime.strptime(str(exp), '%Y-%m-%d') <= threshold:
-                        count += 1
-                except ValueError:
-                    pass
-        return count
-
-    def link_stock_movement(self, product: Product, movement: StockMovement):
-        processor = get_movement_processor(movement, self.db)
-        processor.process(product)
-
-    def _doc_to_product(self, doc) -> Product:
-        data = doc.to_dict()
-        exp = data.get('expirationDate')
-        if isinstance(exp, datetime):
-            exp_date = exp
-        elif exp:
-            try:
-                exp_date = datetime.strptime(str(exp), '%Y-%m-%d')
-            except ValueError:
-                exp_date = None
-        else:
-            exp_date = None
-        stock = data.get('stock', {})
-        if isinstance(stock, dict):
-            stock_qty = int(stock.get('quantity', 0))
-            stock_min = int(stock.get('minimum', 0))
-        else:
-            stock_qty = int(stock) if stock is not None else 0
-            stock_min = 0
-        variants = data.get('variants', [])
+    def _row_to_product(self, row: dict) -> Product:
+        variants = row.get('variants') or []
         if not isinstance(variants, list):
             variants = []
-        addons = data.get('addons', [])
+        addons = row.get('addons') or []
         if not isinstance(addons, list):
             addons = []
         normalized_addons = []
@@ -217,36 +150,192 @@ class ProductRepository:
                     'price': float(a.get('price', 0) or 0),
                 })
         addons = normalized_addons
-        image_url = data.get('imageUrl', '') or data.get('image', '')
-        image_path = data.get('imagePath', '')
+        expiration = row.get('expiration_date')
+        if isinstance(expiration, str):
+            try:
+                expiration = datetime.strptime(expiration, '%Y-%m-%d')
+            except ValueError:
+                expiration = None
         return Product(
-            product_id=doc.id,
-            name=data.get('name', ''),
-            barcode=data.get('barcode', ''),
-            category=data.get('category', ''),
-            description=data.get('description', ''),
-            image_url=image_url,
-            image_path=image_path,
-            status=data.get('status', 'Available'),
-            pricing_type=data.get('pricingType', 'single'),
-            price=data.get('price', 0),
+            product_id=row['id'],
+            name=row.get('name', ''),
+            barcode=row.get('barcode') or '',
+            category=row.get('category') or '',
+            description=row.get('description') or '',
+            image_url=row.get('image_url') or '',
+            image_path=row.get('image_path') or '',
+            status=row.get('status', 'Available'),
+            pricing_type=row.get('pricing_type', 'single'),
+            price=float(row.get('price') or 0),
             variants=variants,
             addons=addons,
-            stock_quantity=stock_qty,
-            stock_minimum=stock_min,
-            expiration_date=exp_date,
-            created_at=data.get('createdAt'),
-            updated_at=data.get('updatedAt'),
-            owner_id=data.get('ownerId'),
+            stock_quantity=int(row.get('stock_quantity') or 0),
+            stock_minimum=int(row.get('stock_minimum') or 0),
+            expiration_date=expiration,
+            created_at=row.get('created_at'),
+            updated_at=row.get('updated_at'),
+            owner_id=row.get('owner_id'),
+        )
+
+    def find_by_id(self, product_id: str, owner_id: Optional[str] = None) -> Optional[Product]:
+        if owner_id:
+            row = query_one(
+                "SELECT * FROM products WHERE id = %s AND owner_id = %s",
+                (product_id, owner_id),
+            )
+        else:
+            row = query_one(
+                "SELECT * FROM products WHERE id = %s", (product_id,)
+            )
+        if not row:
+            return None
+        return self._row_to_product(row)
+
+    def find_by_barcode(self, barcode: str, owner_id: Optional[str] = None) -> Optional[Product]:
+        if owner_id:
+            rows = query_all(
+                "SELECT * FROM products WHERE barcode = %s AND owner_id = %s LIMIT 1",
+                (barcode, owner_id),
+            )
+        else:
+            rows = query_all(
+                "SELECT * FROM products WHERE barcode = %s LIMIT 1",
+                (barcode,),
+            )
+        if not rows:
+            return None
+        return self._row_to_product(rows[0])
+
+    def find_all(self, owner_id: Optional[str] = None) -> List[Product]:
+        if not owner_id:
+            raise ValueError("owner_id is required for find_all")
+        rows = query_all(
+            "SELECT * FROM products WHERE owner_id = %s ORDER BY name",
+            (owner_id,),
+        )
+        return [self._row_to_product(r) for r in rows]
+
+    def find_in_stock(self, owner_id: Optional[str] = None) -> List[Product]:
+        return [p for p in self.find_all(owner_id) if p.stock_quantity > 0]
+
+    def find_low_stock(self, threshold: int = LOW_STOCK_THRESHOLD,
+                       owner_id: Optional[str] = None) -> List[Product]:
+        rows = query_all(
+            "SELECT * FROM products WHERE owner_id = %s AND stock_quantity <= stock_minimum "
+            "ORDER BY name",
+            (owner_id,),
+        )
+        return [self._row_to_product(r) for r in rows]
+
+    def save(self, product: Product, product_id: Optional[str] = None):
+        pid = product_id or product.id
+        data = product.to_dict()
+        data['id'] = pid
+        data['owner_id'] = product.owner_id
+        self._upsert_product(data)
+        return pid
+
+    def save_from_dict(self, data: dict, product_id: Optional[str] = None):
+        pid = product_id or data.get('id') or str(uuid.uuid4())
+        data['id'] = pid
+        self._upsert_product(data)
+        return pid
+
+    def update(self, product_id: str, data: dict):
+        self._upsert_product(data, product_id=product_id)
+
+    def delete(self, product_id: str):
+        execute("DELETE FROM products WHERE id = %s", (product_id,))
+
+    def count_low_stock(self, threshold: int = LOW_STOCK_THRESHOLD,
+                        owner_id: Optional[str] = None) -> int:
+        return len(self.find_low_stock(threshold, owner_id))
+
+    def count_expiring(self, days: int, owner_id: Optional[str] = None) -> int:
+        threshold = datetime.now() + timedelta(days=days)
+        row = query_one(
+            "SELECT COUNT(*) AS cnt FROM products WHERE owner_id = %s "
+            "AND expiration_date IS NOT NULL AND expiration_date <= %s",
+            (owner_id, threshold.date() if hasattr(threshold, 'date') else threshold),
+        )
+        return int(row['cnt']) if row else 0
+
+    def link_stock_movement(self, product: Product, movement: StockMovement):
+        processor = get_movement_processor(movement, self)
+        processor.process(product)
+
+    # ------------------------------------------------------------------
+    # Internal upsert
+    # ------------------------------------------------------------------
+    def _upsert_product(self, data: dict, product_id: Optional[str] = None):
+        pid = product_id or data.get('id')
+        stock = data.get('stock')
+        if isinstance(stock, dict):
+            stock_qty = int(stock.get('quantity', 0) or 0)
+            stock_min = int(stock.get('minimum', 0) or 0)
+        else:
+            stock_qty = int(data.get('stock_quantity', stock or 0) or 0)
+            stock_min = int(data.get('stock_minimum', 0) or 0)
+
+        variants = data.get('variants', [])
+        if not isinstance(variants, list):
+            variants = []
+        addons = data.get('addons', [])
+        if not isinstance(addons, list):
+            addons = []
+
+        expiration = data.get('expirationDate') or data.get('expiration_date')
+        if isinstance(expiration, str):
+            try:
+                expiration = datetime.strptime(expiration, '%Y-%m-%d').date()
+            except ValueError:
+                expiration = None
+        elif isinstance(expiration, datetime):
+            expiration = expiration.date()
+
+        now_ts = now()
+        created_at = data.get('createdAt') or data.get('created_at') or now_ts
+        updated_at = data.get('updatedAt') or data.get('updated_at') or now_ts
+
+        execute(
+            "INSERT INTO products (id, name, barcode, category, description, image_url, image_path, "
+            "status, pricing_type, price, variants, addons, stock_quantity, stock_minimum, "
+            "expiration_date, created_at, updated_at, owner_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            "name = EXCLUDED.name, barcode = EXCLUDED.barcode, category = EXCLUDED.category, "
+            "description = EXCLUDED.description, image_url = EXCLUDED.image_url, "
+            "image_path = EXCLUDED.image_path, status = EXCLUDED.status, "
+            "pricing_type = EXCLUDED.pricing_type, price = EXCLUDED.price, "
+            "variants = EXCLUDED.variants, addons = EXCLUDED.addons, "
+            "stock_quantity = EXCLUDED.stock_quantity, stock_minimum = EXCLUDED.stock_minimum, "
+            "expiration_date = EXCLUDED.expiration_date, updated_at = EXCLUDED.updated_at",
+            (
+                pid,
+                data.get('name', ''),
+                data.get('barcode') or '',
+                data.get('category') or '',
+                data.get('description') or '',
+                data.get('imageUrl') or data.get('image_url') or '',
+                data.get('imagePath') or data.get('image_path') or '',
+                data.get('status', 'Available'),
+                data.get('pricingType') or data.get('pricing_type') or 'single',
+                float(data.get('price', 0) or 0),
+                Json(variants) if variants else '[]',
+                Json(addons) if addons else '[]',
+                stock_qty,
+                stock_min,
+                expiration,
+                created_at,
+                updated_at,
+                data.get('ownerId') or data.get('owner_id'),
+            ),
         )
 
 
 class SalesService(ISalesService):
     """Processes a coffee-shop sale, deducting stock and recording the sale +
-    its line items (as a subcollection) plus a stock movement per item."""
-
-    def __init__(self, db=None):
-        self.db = db or get_db()
+    its line items plus a stock movement per item, all in one transaction."""
 
     def process_sale(self, items: list, cashier_id: str, owner_id: str) -> dict:
         """items: list of dicts: {id, name, price, quantity, cupSize, productType}"""
@@ -257,91 +346,78 @@ class SalesService(ISalesService):
                 if 'id' not in item or 'quantity' not in item:
                     raise ValueError("Invalid item data.")
 
-            products_col = self.db.collection('products')
-            receipt_items = []
+            receipt_number = self._generate_receipt_number()
+            now_ts = now()
             total_amount = 0.0
             sale_product_types = set()
-
-            # Validate stock using base product stock.
+            receipt_items = []
             product_cache = {}
-            for item in items:
-                product_doc = products_col.document(item['id']).get()
-                if not product_doc.exists:
-                    raise ValueError(f"Product no longer exists: {item.get('name')}")
-                pdata = product_doc.to_dict()
-                stock_data = pdata.get('stock', {})
-                if isinstance(stock_data, dict):
-                    available = int(stock_data.get('quantity', 0))
-                else:
-                    available = int(stock_data) if stock_data is not None else 0
-                requested = int(item['quantity'])
-                if available < requested:
-                    raise ValueError(
-                        f"Not enough stock for {pdata.get('name')}. "
-                        f"Available: {available}"
+
+            with transaction() as (conn, cur):
+                # Validate stock and compute totals
+                for item in items:
+                    product = ProductRepository().find_by_id(item['id'], owner_id=owner_id)
+                    if product is None:
+                        raise ValueError(f"Product no longer exists: {item.get('name')}")
+                    available = product.stock_quantity
+                    requested = int(item['quantity'])
+                    if available < requested:
+                        raise ValueError(
+                            f"Not enough stock for {product.name}. Available: {available}"
+                        )
+                    product_cache[item['id']] = product
+                    sale_product_types.add(product.category if product.category else 'Coffee Drinks')
+                    subtotal = round(float(item['price']) * requested, 2)
+                    total_amount += subtotal
+                    receipt_items.append({
+                        'name': item['name'],
+                        'price': float(item['price']),
+                        'quantity': requested,
+                        'cupSize': item.get('cupSize', 'S'),
+                        'image': item.get('image', ''),
+                        'addons': item.get('addons', []),
+                        'subtotal': subtotal,
+                    })
+
+                product_type = 'Coffee' if 'Coffee Drinks' in sale_product_types else 'Pastry'
+
+                sale_id = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO sales (id, receipt_no, cashier_id, owner_id, total, date, "
+                    "product_type, status, receipt_printed, printed_at, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        sale_id, receipt_number, cashier_id, owner_id,
+                        round(total_amount, 2), now_ts, product_type, 'Pending',
+                        False, None, now_ts,
+                    ),
+                )
+
+                for item in items:
+                    product = product_cache[item['id']]
+                    requested = int(item['quantity'])
+                    new_stock = product.stock_quantity - requested
+                    cur.execute(
+                        "UPDATE products SET stock_quantity = %s, updated_at = %s WHERE id = %s",
+                        (new_stock, now_ts, product.id),
                     )
-                product_cache[item['id']] = (product_doc, pdata)
-                sale_product_types.add(pdata.get('category', 'Coffee Drinks'))
-                subtotal = round(float(item['price']) * requested, 2)
-                total_amount += subtotal
-                receipt_items.append({
-                    'name': item['name'],
-                    'price': float(item['price']),
-                    'quantity': requested,
-                    'cupSize': item.get('cupSize', 'S'),
-                    'image': item.get('image', ''),
-                    'addons': item.get('addons', []),
-                    'subtotal': subtotal,
-                })
-
-            # Determine product type: Coffee if any coffee item, else Pastry.
-            product_type = 'Coffee' if 'Coffee Drinks' in sale_product_types else 'Pastry'
-
-            receipt_number = self._generate_receipt_number()
-            now = datetime.now()
-
-            sale_ref = self.db.collection('sales').document()
-            sale_ref.set({
-                'receiptNo': receipt_number,
-                'cashierId': cashier_id,
-                'ownerId': owner_id,
-                'total': round(total_amount, 2),
-                'date': now,
-                'productType': product_type,
-                'status': 'Pending',
-                'receiptPrinted': False,
-                'printedAt': None,
-            })
-
-            batch = self.db.batch()
-            for item in items:
-                product_doc, pdata = product_cache[item['id']]
-                requested = int(item['quantity'])
-                stock_data = pdata.get('stock', {})
-                if isinstance(stock_data, dict):
-                    new_stock = int(stock_data.get('quantity', 0)) - requested
-                else:
-                    new_stock = int(stock_data) - requested if stock_data is not None else -requested
-                batch.update(product_doc.reference, {'stock': {'quantity': new_stock, 'minimum': stock_data.get('minimum', 0) if isinstance(stock_data, dict) else 0}})
-                sale_ref.collection('items').add({
-                    'productId': item['id'],
-                    'name': item['name'],
-                    'price': float(item['price']),
-                    'quantity': requested,
-                    'cupSize': item.get('cupSize', 'S'),
-                    'image': item.get('image', ''),
-                })
-                self.db.collection('stock_movements').add({
-                    'productId': item['id'],
-                    'ownerId': owner_id,
-                    'movementType': 'OUT',
-                    'quantity': requested,
-                    'reason': 'Sale',
-                    'timestamp': now,
-                    'receiptNo': receipt_number,
-                })
-
-            batch.commit()
+                    cur.execute(
+                        "INSERT INTO sale_items (sale_id, product_id, name, price, quantity, cup_size, image) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            sale_id, product.id, item['name'],
+                            float(item['price']), requested,
+                            item.get('cupSize', 'S'), item.get('image', ''),
+                        ),
+                    )
+                    cur.execute(
+                        "INSERT INTO stock_movements (product_id, movement_type, quantity, reason, "
+                        "timestamp, owner_id, receipt_no) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            product.id, 'OUT', requested, 'Sale',
+                            now_ts, owner_id, receipt_number,
+                        ),
+                    )
 
             return {
                 'success': True,
@@ -350,75 +426,58 @@ class SalesService(ISalesService):
                 'tendered': 0,
                 'change': 0,
                 'items': receipt_items,
-                'date': now.strftime('%Y-%m-%d %H:%M:%S'),
+                'date': now_ts.strftime('%Y-%m-%d %H:%M:%S'),
             }
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
     def mark_receipt_printed(self, receipt_number: str, owner_id: str) -> bool:
         try:
-            sales = list(self.db.collection('sales').where('receiptNo', '==', receipt_number).stream())
-            for sale in sales:
-                sdata = sale.to_dict()
-                if sdata.get('status') != 'Pending':
-                    continue
-                if sdata.get('ownerId') != owner_id:
-                    continue
-                sale.reference.update({
-                    'status': 'Completed',
-                    'receiptPrinted': True,
-                    'printedAt': datetime.now(),
-                })
-                return True
-            return False
+            row = query_one(
+                "SELECT id, status FROM sales WHERE receipt_no = %s AND owner_id = %s "
+                "AND status = 'Pending' FOR UPDATE", (receipt_number, owner_id)
+            )
+            if not row:
+                return False
+            execute(
+                "UPDATE sales SET status = 'Completed', receipt_printed = TRUE, printed_at = %s "
+                "WHERE id = %s", (now(), row['id'])
+            )
+            return True
         except Exception:
             return False
 
     def cancel_pending_sale(self, receipt_number: str, owner_id: str) -> bool:
         try:
-            sales = list(self.db.collection('sales').where('receiptNo', '==', receipt_number).stream())
-            sale = None
-            for s in sales:
-                sdata = s.to_dict()
-                if sdata.get('status') == 'Pending' and sdata.get('ownerId') == owner_id:
-                    sale = s
-                    break
-            if not sale:
+            row = query_one(
+                "SELECT id FROM sales WHERE receipt_no = %s AND owner_id = %s "
+                "AND status = 'Pending'", (receipt_number, owner_id)
+            )
+            if not row:
                 return False
-            items = list(sale.reference.collection('items').stream())
-            batch = self.db.batch()
+            sale_id = row['id']
 
-            for item in items:
-                item_data = item.to_dict()
-                product_id = item_data.get('productId')
-                qty = int(item_data.get('quantity', 0))
-                if product_id:
-                    product_doc = self.db.collection('products').document(product_id).get()
-                    if product_doc.exists:
-                        pdata = product_doc.to_dict()
-                        stock_data = pdata.get('stock', {})
-                        if isinstance(stock_data, dict):
-                            current_stock = int(stock_data.get('quantity', 0))
-                        else:
-                            current_stock = int(stock_data) if stock_data is not None else 0
-                        new_stock = current_stock + qty
-                        batch.update(product_doc.reference, {'stock': {'quantity': new_stock, 'minimum': stock_data.get('minimum', 0) if isinstance(stock_data, dict) else 0}})
+            with transaction() as (conn, cur):
+                # Restore stock for each item
+                cur.execute(
+                    "SELECT product_id, quantity FROM sale_items WHERE sale_id = %s",
+                    (sale_id,),
+                )
+                for si in cur.fetchall() or []:
+                    cur.execute(
+                        "UPDATE products SET stock_quantity = stock_quantity + %s, updated_at = %s "
+                        "WHERE id = %s",
+                        (int(si['quantity']), now(), si['product_id']),
+                    )
+                cur.execute("DELETE FROM sale_items WHERE sale_id = %s", (sale_id,))
+                cur.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
 
-            for item in items:
-                batch.delete(item.reference)
-
-            batch.delete(sale.reference)
-            batch.commit()
-
-            self.db.collection('stock_movements').add({
-                'productId': 'N/A',
-                'ownerId': owner_id,
-                'movementType': 'IN',
-                'quantity': 0,
-                'reason': f'Cancelled pending sale {receipt_number}',
-                'timestamp': datetime.now(),
-            })
-
+            execute(
+                "INSERT INTO stock_movements (product_id, movement_type, quantity, reason, "
+                "timestamp, owner_id, receipt_no) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                ('N/A', 'IN', 0, f'Cancelled pending sale {receipt_number}',
+                 now(), owner_id, receipt_number),
+            )
             return True
         except Exception:
             return False

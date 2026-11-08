@@ -1,18 +1,16 @@
 # BrewPOS - Coffee Shop POS & Inventory System
-# Python dependencies (Flask + Firebase)
+# Python dependencies (Flask + PostgreSQL)
 
 # Core Framework
 Flask==2.3.3
 Werkzeug==2.3.7
 
-# Firebase (Cloud Firestore + Admin SDK for backend token verification)
-firebase-admin==6.4.0
+# PostgreSQL driver (parameterized queries, primary database)
+psycopg2-binary==2.9.13
 python-dotenv==1.0.1
 
-# Optional: client-side Google auth in app (pyrebase4)
-# pyrebase4==4.7.1
-
-# Google Sign-In is handled by the Firebase JS SDK in the browser.
+# Resend API for transactional email (OTP delivery)
+resend==2.51.0
 
 # Production server
 gunicorn==21.2.0

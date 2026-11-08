@@ -1,7 +1,7 @@
-"""BrewPOS - Coffee Shop POS and Inventory System (Flask + Firebase/Firestore).
+"""BrewPOS - Coffee Shop POS and Inventory System (Flask + PostgreSQL).
 
-Pure coffee-focused POS. Authentication uses Google Sign-In (firebase-admin
-token verification). All data lives in Cloud Firestore.
+Pure coffee-focused POS. Authentication uses local email/password accounts
+(securely hashed). All data lives in PostgreSQL.
 """
 
 from flask import (
@@ -11,23 +11,25 @@ from flask import (
 from datetime import datetime, timedelta
 from typing import Optional
 import os
-import random
 import json
 import uuid
 from io import BytesIO
 from functools import wraps
+
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
-from firebase_config import (
-    init_firebase, get_db, FIREBASE_WEB_CONFIG,
-    LOW_STOCK_THRESHOLD, EXPIRING_DAYS,
-    DEFAULT_CATEGORIES, DEFAULT_ADDONS, DEFAULT_STORE_SETTINGS,
-    upload_image_to_storage, delete_image_from_storage, build_image_path,
-    validate_image_file, compress_image,
+from db import (
+    init_db, get_cursor, query_all, query_one, execute,
+    LOW_STOCK_THRESHOLD, EXPIRING_DAYS, DEFAULT_CATEGORIES,
+    DEFAULT_ADDONS, DEFAULT_STORE_SETTINGS,
 )
-
 from models import Product, StockMovement, User, Admin, Cashier
 from services import AuthService, ProductRepository, SalesService
+from otp import (
+    generate_otp, send_otp_email, store_otp, verify_otp,
+    cleanup_expired_otps, can_resend,
+)
 
 
 def _to_naive(dt):
@@ -44,10 +46,51 @@ def _current_owner_id():
     if session.get('role') == 'cashier':
         cid = session.get('cashier_id')
         if cid:
-            doc = db.collection('cashiers').document(cid).get()
-            if doc.exists:
-                return doc.to_dict().get('ownerId')
+            user = auth_service.get_user_by_id(cid)
+            if user:
+                return user.get('owner_id') or user.get('id')
     return None
+
+
+# ---------------------------------------------------------------
+# Activity logging helpers
+# ---------------------------------------------------------------
+
+def _log_admin_activity(action: str, details: str = ''):
+    admin_id = session.get('admin_id')
+    execute(
+        "INSERT INTO admin_activity (admin_id, action, timestamp, details, owner_id) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (admin_id, action, datetime.now(), details, admin_id),
+    )
+
+
+def _log_cashier_activity(action: str, details: str = ''):
+    cashier_id = session.get('cashier_id')
+    owner_id = _current_owner_id()
+    execute(
+        "INSERT INTO cashier_activity (cashier_id, action, timestamp, owner_id) "
+        "VALUES (%s, %s, %s, %s)",
+        (cashier_id, action, datetime.now(), owner_id),
+    )
+
+
+# ---------------------------------------------------------------
+# Store settings
+# ---------------------------------------------------------------
+
+def get_store_settings(owner_id: Optional[str] = None):
+    doc_id = f'config_{owner_id}' if owner_id else 'config'
+    row = query_one("SELECT * FROM store_settings WHERE id = %s", (doc_id,))
+    if row:
+        return {
+            'storeName': row['store_name'],
+            'subtitle': row['subtitle'],
+            'address': row['address'],
+            'contact': row['contact'],
+            'footer': row['footer'],
+        }
+    return dict(DEFAULT_STORE_SETTINGS)
 
 
 # ---------------------------------------------------------------
@@ -64,23 +107,31 @@ LOW_STOCK_THRESHOLD = LOW_STOCK_THRESHOLD
 EXPIRING_DAYS = EXPIRING_DAYS
 DEFAULT_CATEGORIES = DEFAULT_CATEGORIES
 
-db = init_firebase()
+try:
+    init_db()
+    print("[BREWPOS] PostgreSQL schema initialized.")
+except Exception as e:
+    print(f"[BREWPOS] WARNING: Could not initialize PostgreSQL schema: {e}")
+    print("[BREWPOS] Set up PostgreSQL and configure .env (see README.md), then restart.")
+
 auth_service = AuthService()
-product_repository = ProductRepository(db)
-sales_service = SalesService(db)
+product_repository = ProductRepository()
+sales_service = SalesService()
 
 CUP_ADD = {'S': 0, 'M': 10, 'L': 20}
 
-# Inject globals into templates
-@app.context_processor
-def inject_globals():
-    return dict(
-        LOW_STOCK_THRESHOLD=LOW_STOCK_THRESHOLD,
-        DEFAULT_CATEGORIES=DEFAULT_CATEGORIES,
-        DEFAULT_ADDONS=DEFAULT_ADDONS,
-        firebase_web_config=FIREBASE_WEB_CONFIG,
-        now=datetime.now,
-    )
+# ---------------------------------------------------------------
+# Local product image upload (replaces Firebase Storage)
+# ---------------------------------------------------------------
+UPLOAD_FOLDER = os.path.join(app.static_folder, 'images', 'products')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+MAX_IMAGE_SIZE_MB = 5
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def allowed_file(filename):
+    return '.' in filename and \
+        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def clean_input(value):
@@ -91,7 +142,7 @@ def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if session.get('role') != 'admin' or not session.get('admin_id'):
-            return redirect(url_for('google_login'))
+            return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
 
@@ -103,21 +154,53 @@ def cashier_required(f):
         if session.get('role') != 'cashier' or not session.get('cashier_id'):
             if is_api:
                 return jsonify({'success': False, 'message': 'Session expired. Please login again.'}), 401
-            return redirect(url_for('google_login'))
-        # Verify cashier is still active
-        doc = db.collection('cashiers').document(session.get('cashier_id')).get()
-        if not doc.exists or (doc.to_dict().get('status', 'active') or 'active') != 'active':
+            return redirect(url_for('login'))
+        user = auth_service.get_user_by_id(session.get('cashier_id'))
+        if not user or (user.get('status', 'active') or 'active') != 'active':
             session.clear()
             if is_api:
                 return jsonify({'success': False, 'message': 'Cashier account is inactive.'}), 401
             flash("Cashier account is inactive. Contact the administrator.", "error")
-            return redirect(url_for('google_login'))
+            return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
 
 
+@app.route('/api/upload_image', methods=['POST'])
+@admin_required
+def api_upload_image():
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'No file part.'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'message': 'No selected file.'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'success': False, 'message': 'Invalid file type. Allowed: PNG, JPG, JPEG, WEBP.'}), 400
+
+    filename = secure_filename(file.filename)
+    # Avoid collisions by prefixing with a uuid
+    name, ext = os.path.splitext(filename)
+    filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(file_path)
+
+    image_url = url_for('product_image', filename=filename, _external=True)
+    return jsonify({'success': True, 'image_url': image_url, 'filename': filename})
+
+
+# Inject globals into templates
+@app.context_processor
+def inject_globals():
+    return dict(
+        LOW_STOCK_THRESHOLD=LOW_STOCK_THRESHOLD,
+        DEFAULT_CATEGORIES=DEFAULT_CATEGORIES,
+        DEFAULT_ADDONS=DEFAULT_ADDONS,
+        now=datetime.now,
+    )
+
+
 # ---------------------------------------------------------------
-# Google Sign-In
+# Authentication (local email/password, replaces Firebase Auth)
 # ---------------------------------------------------------------
 @app.route('/')
 def index():
@@ -125,121 +208,231 @@ def index():
         return redirect(url_for('admin_dashboard'))
     if session.get('role') == 'cashier':
         return redirect(url_for('cashier_dashboard'))
-    if session.get('google_auth'):
-        return redirect(url_for('select_role'))
-    return redirect(url_for('google_login'))
+    return redirect(url_for('login'))
 
 
 @app.route('/login')
-def google_login():
+def login():
     if session.get('role') in ('admin', 'cashier'):
         return redirect(url_for('index'))
-    if session.get('google_auth'):
-        return redirect(url_for('select_role'))
-    return render_template('google_login.html')
+    return render_template('login.html')
 
 
-@app.route('/api/google_signin', methods=['POST'])
-def api_google_signin():
+@app.route('/register')
+def register():
+    if session.get('role') in ('admin', 'cashier'):
+        return redirect(url_for('index'))
+    return redirect(url_for('login'))
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_auth_login():
     data = request.get_json(silent=True) or {}
-    id_token = data.get('idToken')
-    if not id_token:
-        return jsonify({'success': False, 'message': 'Missing ID token.'}), 400
+    email = clean_input(data.get('email', ''))
+    password = data.get('password', '')
+    if not email or not password:
+        return jsonify({'success': False, 'message': 'Email and password are required.'}), 400
 
-    claims = auth_service.verify_google_user(id_token)
-    if not claims:
-        return jsonify({'success': False, 'message': 'Invalid Google token.'}), 401
+    user = auth_service.authenticate(email, password)
+    if not user:
+        return jsonify({'success': False, 'message': 'Invalid email or password.'}), 401
 
-    user_doc = auth_service.get_or_create_user(claims)
     session.clear()
-    session['google_auth'] = {
-        'uid': user_doc.get('uid'),
-        'email': user_doc.get('email'),
-        'displayName': user_doc.get('displayName'),
-    }
+    session.update(auth_service.get_session_data(user))
+    session['user_email'] = user.get('email')
+    session['user_display_name'] = user.get('display_name')
     session.permanent = True
 
-    # Log activity
-    try:
-        role = user_doc.get('role')
-        if role == 'admin':
-            db.collection('admin_activity').add({
-                'adminId': user_doc.get('uid'),
-                'action': 'Admin Login',
-                'timestamp': datetime.now(),
-                'ownerId': session.get('admin_id'),
-            })
+    if user.get('role') == 'admin':
+        _log_admin_activity('Login', f'Admin {user.get("email")} logged in')
+    else:
+        _log_cashier_activity('Login', f'Cashier {user.get("email")} logged in')
+
+    redirect_url = url_for('admin_dashboard') if user.get('role') == 'admin' else url_for('cashier_dashboard')
+    return jsonify({'success': True, 'redirect': redirect_url})
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_auth_register():
+    data = request.get_json(silent=True) or {}
+    email = clean_input(data.get('email', ''))
+    password = data.get('password', '')
+    display_name = clean_input(data.get('display_name', ''))
+    if not email or not password or not display_name:
+        return jsonify({'success': False, 'message': 'All fields are required.'}), 400
+
+    row = query_one("SELECT COUNT(*) AS cnt FROM users")
+    existing_count = int(row['cnt']) if row else 0
+    role = 'admin' if existing_count == 0 else 'cashier'
+
+    user = auth_service.create_user(email, password, display_name, role=role)
+    if not user:
+        return jsonify({'success': False, 'message': 'Email already registered.'}), 400
+
+    if role == 'admin':
+        execute("UPDATE users SET owner_id = id WHERE id = %s", (user['id'],))
+    else:
+        admin = query_one("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+        if admin:
+            execute("UPDATE users SET owner_id = %s WHERE id = %s", (admin['id'], user['id']))
+
+    redirect_url = url_for('admin_dashboard') if role == 'admin' else url_for('cashier_dashboard')
+    return jsonify({'success': True, 'redirect': redirect_url})
+
+
+@app.route('/api/auth/send_otp', methods=['POST'])
+def api_auth_send_otp():
+    """Send an OTP code to the user's email for login or registration via Resend."""
+    data = request.get_json(silent=True) or {}
+    email = clean_input(data.get('email', ''))
+    purpose = data.get('purpose', 'login')
+    if purpose not in ('login', 'register', 'password_reset'):
+        purpose = 'login'
+    if not email:
+        return jsonify({'success': False, 'message': 'Email is required.'}), 400
+    if not _is_valid_email_app(email):
+        return jsonify({'success': False, 'message': 'Please enter a valid email address.'}), 400
+
+    cleanup_expired_otps()
+
+    # Enforce 60-second resend cooldown
+    cooldown = can_resend(email, purpose)
+    if not cooldown['allowed']:
+        return jsonify({
+            'success': False,
+            'message': f'Please wait {cooldown["remaining_seconds"]}s before requesting another OTP.',
+            'cooldown_seconds': cooldown['remaining_seconds'],
+        }), 429
+
+    # For login, the account must already exist
+    owner_id = None
+    if purpose == 'login':
+        user = auth_service.get_user_by_email(email)
+        if not user:
+            return jsonify({'success': False, 'message': 'No account found with this email.'}), 404
+        owner_id = user['id']
+    elif purpose == 'register':
+        # Cannot register an email that already has an account
+        existing = auth_service.get_user_by_email(email)
+        if existing:
+            return jsonify({'success': False, 'message': 'An account already exists for this email.'}), 409
+
+    otp_code = generate_otp()
+    result = store_otp(email, otp_code, purpose, owner_id=owner_id)
+    if not result['ok']:
+        return jsonify({'success': False, 'message': result['message']}), 500
+
+    sent = send_otp_email(email, otp_code, purpose)
+    if not sent:
+        # OTP stored but email delivery failed; surface the error, never leak the OTP
+        return jsonify({
+            'success': False,
+            'message': 'OTP generated but email delivery failed. Please try again.',
+        }), 502
+
+    return jsonify({'success': True, 'message': f'OTP sent to {email}'})
+
+
+def _is_valid_email_app(email: str) -> bool:
+    import re
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email or ""))
+
+
+@app.route('/api/auth/verify_otp', methods=['POST'])
+def api_auth_verify_otp():
+    """Verify an OTP code and log the user in (login purpose) or confirm email (register purpose)."""
+    data = request.get_json(silent=True) or {}
+    email = clean_input(data.get('email', ''))
+    code = data.get('code', '')
+    purpose = data.get('purpose', 'login')
+    if not email or not code:
+        return jsonify({'success': False, 'message': 'Email and OTP code are required.'}), 400
+
+    result = verify_otp(email, code, purpose)
+    if not result['success']:
+        return jsonify({'success': False, 'message': result['message']}), 400
+
+    if purpose == 'login':
+        user = auth_service.get_user_by_email(email)
+        if not user:
+            return jsonify({'success': False, 'message': 'User not found.'}), 404
+
+        session.clear()
+        session.update(auth_service.get_session_data(user))
+        session['user_email'] = user.get('email')
+        session['user_display_name'] = user.get('display_name')
+        session.permanent = True
+
+        if user.get('role') == 'admin':
+            _log_admin_activity('OTP Login', f'Admin {user.get("email")} logged in via OTP')
         else:
-            db.collection('cashier_activity').add({
-                'cashierId': user_doc.get('uid'),
-                'action': 'Login',
-                'timestamp': datetime.now(),
-                'ownerId': session.get('admin_id'),
-            })
-    except Exception:
-        pass
+            _log_cashier_activity('OTP Login', f'Cashier {user.get("email")} logged in via OTP')
 
-    return jsonify({'success': True})
+        redirect_url = url_for('admin_dashboard') if user.get('role') == 'admin' else url_for('cashier_dashboard')
+        return jsonify({'success': True, 'redirect': redirect_url, 'role': user.get('role')})
+
+    # register / password_reset: OTP verified, email confirmed
+    return jsonify({'success': True, 'message': 'OTP verified. Email confirmed.', 'email': email})
 
 
-# ---------------------------------------------------------------
-# Role Selection
-# ---------------------------------------------------------------
+@app.route('/api/auth/register_complete', methods=['POST'])
+def api_auth_register_complete():
+    """Complete account registration after OTP email verification.
+
+    Requires a verified OTP for the email with purpose='register'.
+    Creates the user account only after email ownership is proven.
+    """
+    data = request.get_json(silent=True) or {}
+    email = clean_input(data.get('email', ''))
+    password = data.get('password', '')
+    display_name = clean_input(data.get('display_name', ''))
+    if not email or not password or not display_name:
+        return jsonify({'success': False, 'message': 'All fields are required.'}), 400
+    if not _is_valid_email_app(email):
+        return jsonify({'success': False, 'message': 'Please enter a valid email address.'}), 400
+
+    # Ensure a verified OTP exists for this email (purpose=register)
+    row = query_one(
+        "SELECT id FROM otp_codes WHERE email = %s AND purpose = 'register' "
+        "AND is_verified = TRUE ORDER BY created_at DESC LIMIT 1",
+        (email,),
+    )
+    if not row:
+        return jsonify({'success': False, 'message': 'Email not verified. Please complete OTP verification first.'}), 403
+
+    # Invalidate the used registration OTP
+    execute("UPDATE otp_codes SET is_verified = TRUE WHERE email = %s AND purpose = 'register'", (email,))
+
+    existing = auth_service.get_user_by_email(email)
+    if existing:
+        return jsonify({'success': False, 'message': 'An account already exists for this email.'}), 409
+
+    row_count = query_one("SELECT COUNT(*) AS cnt FROM users")
+    existing_count = int(row_count['cnt']) if row_count else 0
+    role = 'admin' if existing_count == 0 else 'cashier'
+
+    user = auth_service.create_user(email, password, display_name, role=role)
+    if not user:
+        return jsonify({'success': False, 'message': 'Email already registered.'}), 400
+
+    if role == 'admin':
+        execute("UPDATE users SET owner_id = id WHERE id = %s", (user['id'],))
+    else:
+        admin = query_one("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+        if admin:
+            execute("UPDATE users SET owner_id = %s WHERE id = %s", (admin['id'], user['id']))
+
+    redirect_url = url_for('admin_dashboard') if role == 'admin' else url_for('cashier_dashboard')
+    return jsonify({'success': True, 'redirect': redirect_url, 'role': role})
+
+
 @app.route('/select_role')
 def select_role():
     if session.get('role') == 'admin' and session.get('admin_id'):
         return redirect(url_for('admin_dashboard'))
     if session.get('role') == 'cashier' and session.get('cashier_id'):
         return redirect(url_for('cashier_dashboard'))
-    if 'google_auth' not in session:
-        return redirect(url_for('google_login'))
-    cashier_username = ''
-    if 'google_auth' in session:
-        uid = session['google_auth'].get('uid')
-        if uid:
-            doc = db.collection('cashiers').document(uid).get()
-            if doc.exists:
-                cashier_username = doc.to_dict().get('username', '')
-    return render_template('select_role.html',
-                           cashier_username=cashier_username,
-                           active_main='select', active_sub='select_role')
-
-
-@app.route('/api/auth/select_role', methods=['POST'])
-def api_auth_select_role():
-    if 'google_auth' not in session:
-        return jsonify({'success': False, 'message': 'Not authenticated.'}), 401
-
-    data = request.get_json(silent=True) or {}
-    role = data.get('role')
-
-    if role == 'admin':
-        username = clean_input(data.get('username', ''))
-        password = clean_input(data.get('password', ''))
-        if username == 'admin' and password == 'admin123':
-            session['role'] = 'admin'
-            session['admin_user'] = session['google_auth']['email']
-            session['admin_id'] = session['google_auth']['uid']
-            return jsonify({'success': True, 'redirect': '/admin'})
-        return jsonify({'success': False, 'message': 'Invalid admin credentials.'}), 401
-
-    if role == 'cashier':
-        username = clean_input(data.get('username', ''))
-        password = data.get('password', '')
-        if not username or not password:
-            return jsonify({'success': False, 'message': 'Username and password are required.'}), 401
-        doc = db.collection('cashiers').document(username).get()
-        if not doc.exists:
-            return jsonify({'success': False, 'message': 'Cashier account not found. Contact admin.'}), 401
-        cashier = doc.to_dict()
-        if not cashier.get('passwordHash') or not check_password_hash(cashier['passwordHash'], password):
-            return jsonify({'success': False, 'message': 'Invalid username or password.'}), 401
-        session['role'] = 'cashier'
-        session['cashier_user'] = cashier.get('username', username)
-        session['cashier_id'] = username
-        return jsonify({'success': True, 'redirect': '/cashier'})
-
-    return jsonify({'success': False, 'message': 'Invalid role.'}), 400
+    return redirect(url_for('login'))
 
 
 # ---------------------------------------------------------------
@@ -249,16 +442,20 @@ def api_auth_select_role():
 @admin_required
 def admin_dashboard():
     owner_id = _current_owner_id()
-    cashiers = [d.to_dict() | {'uid': d.id} for d in
-                db.collection('cashiers').where('ownerId', '==', owner_id).stream()]
-    active = [a.to_dict() for a in
-              db.collection('cashier_activity').where('ownerId', '==', session.get('admin_id')).stream()]
-    active = [a for a in active if a.get('action') == 'Login']
-    # Build active set (logins without matching logout)
+    cashier_rows = query_all(
+        "SELECT id, email, username, display_name, status, created_at FROM users "
+        "WHERE role = 'cashier' AND owner_id = %s ORDER BY display_name",
+        (owner_id,),
+    )
+    cashiers = [dict(r) for r in cashier_rows]
+
     activity_logs = []
-    logs_raw = list(db.collection('cashier_activity').where('ownerId', '==', session.get('admin_id')).stream())
-    for a in sorted(logs_raw, key=lambda x: x.to_dict().get('timestamp', ''), reverse=True)[:10]:
-        activity_logs.append(a.to_dict())
+    logs_raw = query_all(
+        "SELECT * FROM cashier_activity WHERE owner_id = %s ORDER BY timestamp DESC LIMIT 10",
+        (session.get('admin_id'),),
+    )
+    for a in logs_raw:
+        activity_logs.append(dict(a))
 
     owner_id = _current_owner_id()
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
@@ -275,9 +472,11 @@ def admin_dashboard():
 @app.route('/admin/cashier_logs')
 @admin_required
 def cashier_logs():
-    logs_raw = list(db.collection('cashier_activity').where('ownerId', '==', session.get('admin_id')).stream())
-    logs = sorted([a.to_dict() for a in logs_raw],
-                  key=lambda x: x.get('timestamp', ''), reverse=True)
+    logs_raw = query_all(
+        "SELECT * FROM cashier_activity WHERE owner_id = %s ORDER BY timestamp DESC",
+        (session.get('admin_id'),),
+    )
+    logs = [dict(a) for a in logs_raw]
     owner_id = _current_owner_id()
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
@@ -289,9 +488,11 @@ def cashier_logs():
 @app.route('/admin/activity_logs')
 @admin_required
 def admin_activity_logs():
-    logs_raw = list(db.collection('admin_activity').where('ownerId', '==', session.get('admin_id')).stream())
-    logs = sorted([a.to_dict() for a in logs_raw],
-                  key=lambda x: x.get('timestamp', ''), reverse=True)[:50]
+    logs_raw = query_all(
+        "SELECT * FROM admin_activity WHERE owner_id = %s ORDER BY timestamp DESC LIMIT 50",
+        (session.get('admin_id'),),
+    )
+    logs = [dict(a) for a in logs_raw]
     owner_id = _current_owner_id()
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
@@ -306,23 +507,7 @@ def admin_activity_logs():
 @app.route('/rankings')
 @admin_required
 def rankings():
-    owner_id = _current_owner_id()
-    counts = {}
-    try:
-        sales = list(db.collection('sales').where('ownerId', '==', owner_id).stream())
-        for sale in sales:
-            items = list(sale.reference.collection('items').stream())
-            for it in items:
-                name = it.to_dict().get('name') or 'Unknown'
-                try:
-                    qty = int(it.to_dict().get('quantity', 0))
-                except (ValueError, TypeError):
-                    qty = 0
-                counts[name] = counts.get(name, 0) + qty
-    except Exception as e:
-        print(f"[RANKINGS] Error reading sales: {e}")
-    top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    return render_template('rankings.html', top=top, owner_id=owner_id)
+    return redirect(url_for('sales_dashboard'))
 
 
 # ---------------------------------------------------------------
@@ -334,12 +519,15 @@ def all_products():
     owner_id = _current_owner_id()
     products = []
     for p in product_repository.find_all(owner_id=owner_id):
-        d = p.to_dict() | {'id': p.id}
-        d['image'] = d.get('imageUrl', '') or d.get('image', '')
-        stock_data = d.get('stock', {})
-        if isinstance(stock_data, dict):
-            d['stock'] = stock_data.get('quantity', 0)
-        d['price'] = d.get('price', 0) or (d.get('variants', [{}])[0].get('price', 0) if d.get('variants') else 0)
+        d = {
+            'id': p.id, 'name': p.name, 'barcode': p.barcode, 'category': p.category,
+            'description': p.description, 'imageUrl': p.image_url, 'image': p.image_url,
+            'imagePath': p.image_path, 'status': p.status, 'pricingType': p.pricing_type,
+            'price': p.price, 'variants': p.variants, 'addons': p.addons,
+            'stock': p.stock_quantity, 'stockMinimum': p.stock_minimum,
+            'expirationDate': str(p.expiration_date) if p.expiration_date else None,
+            'createdAt': p.created_at, 'updatedAt': p.updated_at, 'ownerId': p.owner_id,
+        }
         products.append(d)
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
@@ -444,26 +632,41 @@ def add_product():
         # Duplicate detection: same name within same category and owner
         existing = None
         owner_id = session.get('admin_id')
-        for d in db.collection('products').where('name', '==', name).stream():
-            ed = d.to_dict()
-            if ed.get('ownerId') == owner_id and ed.get('category') == category:
-                existing = d
-                break
+        rows = query_all(
+            "SELECT id FROM products WHERE name = %s AND owner_id = %s LIMIT 1",
+            (name, owner_id),
+        )
+        if rows:
+            existing = rows[0]['id']
 
         try:
             now = datetime.now()
             if existing:
-                existing_data = existing.to_dict()
-                new_stock = existing_data.get('stock', {}).get('quantity', 0) + stock_qty if isinstance(existing_data.get('stock'), dict) else existing_data.get('stock', 0) + stock_qty
-                existing.reference.update({
-                    'stock': {'quantity': new_stock, 'minimum': stock_min},
+                product_id = existing
+                product = product_repository.find_by_id(product_id, owner_id=owner_id)
+                new_stock = product.stock_quantity + stock_qty
+                product_repository.update(product_id, {
+                    'stock_quantity': new_stock,
+                    'stock_minimum': stock_min,
                     'updatedAt': now,
                 })
-                product_id = existing.id
                 message = f"Stock updated! Added {stock_qty} units. Total: {new_stock}"
                 action = 'Stock Update'
             else:
+                # Image handling: uploaded file takes precedence over image_url text
                 image_url = clean_input(request.form.get('image_url', ''))
+                uploaded_file = request.files.get('product_image')
+                if uploaded_file and uploaded_file.filename and allowed_file(uploaded_file.filename):
+                    filename = secure_filename(uploaded_file.filename)
+                    name, ext = os.path.splitext(filename)
+                    filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
+                    file_path = os.path.join(UPLOAD_FOLDER, filename)
+                    uploaded_file.save(file_path)
+                    image_url = url_for('product_image', filename=filename, _external=True)
+                elif uploaded_file and uploaded_file.filename:
+                    # invalid file type
+                    pass  # fall back to image_url text
+
                 product_data = {
                     'name': name,
                     'barcode': barcode,
@@ -474,7 +677,8 @@ def add_product():
                     'pricingType': pricing_type,
                     'variants': variants,
                     'addons': selected_addons,
-                    'stock': {'quantity': stock_qty, 'minimum': stock_min},
+                    'stock_quantity': stock_qty,
+                    'stock_minimum': stock_min,
                     'createdAt': now,
                     'updatedAt': now,
                     'ownerId': session.get('admin_id'),
@@ -485,20 +689,14 @@ def add_product():
                 message = "Product added successfully."
                 action = 'Add New Product'
 
-            db.collection('stock_movements').add({
-                'productId': product_id,
-                'movementType': 'IN',
-                'quantity': stock_qty,
-                'reason': 'Stock Addition',
-                'timestamp': now,
-            })
-            db.collection('admin_activity').add({
-                'adminId': session.get('admin_id'),
-                'action': action,
-                'timestamp': now,
-                'details': f'{name} - {stock_qty} units added',
-                'ownerId': session.get('admin_id'),
-            })
+                execute(
+                    "INSERT INTO stock_movements (id, product_id, movement_type, quantity, reason, timestamp, owner_id, receipt_no) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (str(uuid.uuid4()), product_id, 'IN', stock_qty, 'Stock Addition',
+                     now, session.get('admin_id'), None),
+                )
+
+            _log_admin_activity(action, f'{name} - {stock_qty} units added')
 
             if is_ajax:
                 return jsonify({'success': True, 'message': message})
@@ -523,36 +721,32 @@ def add_product():
 def delete_product(product_id):
     owner_id = _current_owner_id()
     if request.method == 'GET':
-        doc = db.collection('products').document(product_id).get()
-        if not doc.exists or doc.to_dict().get('ownerId') != owner_id:
+        product = product_repository.find_by_id(product_id, owner_id=owner_id)
+        if not product:
             flash("Product not found", "error")
             return redirect(url_for('all_products'))
-        raw = doc.to_dict()
-        product = raw | {'id': doc.id}
-        product['image'] = product.get('imageUrl', '') or product.get('image', '')
-        product['imagePath'] = product.get('imagePath', '')
-        stock_data = product.get('stock', {})
-        if isinstance(stock_data, dict):
-            product['stock'] = stock_data.get('quantity', 0)
+        p = {
+            'id': product.id, 'name': product.name, 'barcode': product.barcode,
+            'category': product.category, 'description': product.description,
+            'imageUrl': product.image_url, 'image': product.image_url,
+            'imagePath': product.image_path, 'status': product.status,
+            'pricingType': product.pricing_type, 'price': product.price,
+            'variants': product.variants, 'addons': product.addons,
+            'stock': product.stock_quantity, 'stockMinimum': product.stock_minimum,
+            'expirationDate': str(product.expiration_date) if product.expiration_date else None,
+        }
         low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
         expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
-        return render_template('confirm_delete_product.html', product=product,
+        return render_template('confirm_delete_product.html', product=p,
                                low_stock_count=low_stock_count, expiring_count=expiring_count,
                                active_main='catalog', active_sub='all_products')
 
     # POST delete
-    doc = db.collection('products').document(product_id).get()
-    if doc.exists and doc.to_dict().get('ownerId') == owner_id:
-        data = doc.to_dict()
-        name = data.get('name', 'Unknown')
+    product = product_repository.find_by_id(product_id, owner_id=owner_id)
+    if product:
+        name = product.name
         product_repository.delete(product_id)
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'),
-            'action': 'Delete Product',
-            'timestamp': datetime.now(),
-            'details': f'Deleted product: {name}',
-            'ownerId': session.get('admin_id'),
-        })
+        _log_admin_activity('Delete Product', f'Deleted product: {name}')
     flash("Product deleted successfully", "success")
     return redirect(url_for('all_products'))
 
@@ -562,8 +756,8 @@ def delete_product(product_id):
 def edit_product(product_id):
     owner_id = _current_owner_id()
     if request.method == 'POST':
-        doc = db.collection('products').document(product_id).get()
-        if not doc.exists or doc.to_dict().get('ownerId') != owner_id:
+        product = product_repository.find_by_id(product_id, owner_id=owner_id)
+        if not product:
             flash("Product not found", "error")
             return redirect(url_for('all_products'))
         name = clean_input(request.form.get('product_name'))
@@ -595,47 +789,46 @@ def edit_product(product_id):
 
         update_data = {
             'name': name, 'barcode': barcode, 'category': category,
-            'price': price, 'stock': {'quantity': stock, 'minimum': stock_min},
-            'expirationDate': expiry, 'updatedAt': datetime.now(),
+            'price': price, 'stock_quantity': stock, 'stock_minimum': stock_min,
+            'expiration_date': expiry, 'updated_at': datetime.now(),
             'addons': selected_addons,
         }
 
         # Image handling
-        doc = db.collection('products').document(product_id).get()
-        old_data = doc.to_dict() if doc.exists else {}
-        old_image_url = old_data.get('imageUrl', '')
-
         image_url = clean_input(request.form.get('image_url', ''))
+        uploaded_file = request.files.get('product_image')
+        if uploaded_file and uploaded_file.filename and allowed_file(uploaded_file.filename):
+            filename = secure_filename(uploaded_file.filename)
+            name, ext = os.path.splitext(filename)
+            filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            uploaded_file.save(file_path)
+            image_url = url_for('product_image', filename=filename, _external=True)
         if image_url:
-            update_data['imageUrl'] = image_url
+            update_data['image_url'] = image_url
 
         product_repository.update(product_id, update_data)
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'),
-            'action': 'Edit Product',
-            'timestamp': datetime.now(),
-            'details': f'Edited product: {name}',
-            'ownerId': session.get('admin_id'),
-        })
+        _log_admin_activity('Edit Product', f'Edited product: {name}')
         flash("Product updated successfully", "success")
         return redirect(url_for('all_products'))
 
-    doc = db.collection('products').document(product_id).get()
-    if not doc.exists or doc.to_dict().get('ownerId') != owner_id:
+    product = product_repository.find_by_id(product_id, owner_id=owner_id)
+    if not product:
         flash("Product not found", "error")
         return redirect(url_for('all_products'))
-    raw = doc.to_dict()
-    product = raw | {'id': doc.id}
-    product['image'] = product.get('imageUrl', '') or product.get('image', '')
-    stock_data = product.get('stock', {})
-    if isinstance(stock_data, dict):
-        product['stock'] = stock_data.get('quantity', 0)
-        product['stockMinimum'] = stock_data.get('minimum', 0)
-    else:
-        product['stockMinimum'] = 0
+    p = {
+        'id': product.id, 'name': product.name, 'barcode': product.barcode,
+        'category': product.category, 'description': product.description,
+        'imageUrl': product.image_url, 'image': product.image_url,
+        'imagePath': product.image_path, 'status': product.status,
+        'pricingType': product.pricing_type, 'price': product.price,
+        'variants': product.variants, 'addons': product.addons,
+        'stock': product.stock_quantity, 'stockMinimum': product.stock_minimum,
+        'expirationDate': str(product.expiration_date) if product.expiration_date else None,
+    }
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
-    return render_template('edit_product.html', product=product, categories=DEFAULT_CATEGORIES,
+    return render_template('edit_product.html', product=p, categories=DEFAULT_CATEGORIES,
                            low_stock_count=low_stock_count, expiring_count=expiring_count,
                            active_main='catalog', active_sub='all_products')
 
@@ -645,15 +838,15 @@ def edit_product(product_id):
 # ---------------------------------------------------------------
 def _period_totals(owner_id: Optional[str] = None):
     """Compute today/week/month/year/overall totals and counts."""
-    query = db.collection('sales')
-    if owner_id:
-        query = query.where('ownerId', '==', owner_id)
-    sales_docs = list(query.stream())
+    rows = query_all(
+        "SELECT * FROM sales WHERE owner_id = %s ORDER BY date DESC",
+        (owner_id,),
+    ) if owner_id else []
     sales = []
-    for d in sales_docs:
-        s = d.to_dict()
-        s['date'] = _to_naive(s.get('date'))
-        sales.append(s)
+    for s in rows:
+        sd = dict(s)
+        sd['date'] = _to_naive(sd.get('date'))
+        sales.append(sd)
 
     now = datetime.now()
     today = now.date()
@@ -691,7 +884,6 @@ def sales_dashboard():
     owner_id = _current_owner_id()
     sales, totals = _period_totals(owner_id=owner_id)
 
-    # Coffee vs Pastry split for each period
     def split(start=None):
         coffee = 0.0
         pastry = 0.0
@@ -701,7 +893,7 @@ def sales_dashboard():
             dt = s['date']
             if start and dt < start:
                 continue
-            if s.get('productType') == 'Coffee':
+            if s.get('product_type') == 'Coffee':
                 coffee += float(s.get('total', 0))
                 coffee_c += 1
             else:
@@ -721,7 +913,6 @@ def sales_dashboard():
     yearly_c, yearly_cc, yearly_p, yearly_pc = split(year_start)
     overall_c, overall_cc, overall_p, overall_pc = split()
 
-    # Daily sales chart (last 30 days) coffee vs pastry
     labels = []
     coffee_vals = []
     pastry_vals = []
@@ -729,24 +920,21 @@ def sales_dashboard():
         day = (now - timedelta(days=i)).date()
         labels.append(day.strftime('%m-%d'))
         c_total = sum(float(s.get('total', 0)) for s in sales
-                      if s['date'].date() == day and s.get('productType') == 'Coffee')
+                      if s['date'].date() == day and s.get('product_type') == 'Coffee')
         p_total = sum(float(s.get('total', 0)) for s in sales
-                      if s['date'].date() == day and s.get('productType') == 'Pastry')
+                      if s['date'].date() == day and s.get('product_type') == 'Pastry')
         coffee_vals.append(round(c_total, 2))
         pastry_vals.append(round(p_total, 2))
 
-    # Top selling products
     agg = {}
-    for s in sales:
-        for item in s.get('items', []) if 'items' in s else []:
-            key = item.get('name')
-            agg[key] = agg.get(key, 0) + int(item.get('quantity', 0))
-    # If embedded items not present, aggregate from subcollections
-    if not agg:
-        for s_doc in db.collection('sales').where('ownerId', '==', owner_id).stream():
-            for it in s_doc.reference.collection('items').stream():
-                itd = it.to_dict()
-                agg[itd.get('name')] = agg.get(itd.get('name'), 0) + int(itd.get('quantity', 0))
+    rows = query_all(
+        "SELECT si.name AS name, si.quantity AS quantity "
+        "FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE s.owner_id = %s",
+        (owner_id,),
+    )
+    for r in rows:
+        key = r['name']
+        agg[key] = agg.get(key, 0) + int(r['quantity'] or 0)
 
     popular = sorted(agg.items(), key=lambda x: x[1], reverse=True)[:10]
 
@@ -775,10 +963,11 @@ def sales_dashboard():
 @admin_required
 def coffee_sales():
     owner_id = _current_owner_id()
-    sales_raw = list(db.collection('sales').where('productType', '==', 'Coffee').stream())
-    sales = sorted([d.to_dict() | {'id': d.id} for d in sales_raw],
-                   key=lambda s: s.get('date', ''), reverse=True)
-    sales = [s for s in sales if s.get('ownerId') == owner_id]
+    rows = query_all(
+        "SELECT * FROM sales WHERE owner_id = %s AND product_type = 'Coffee' ORDER BY date DESC",
+        (owner_id,),
+    )
+    sales = [dict(r) for r in rows]
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     return render_template('sales_coffee_content.html', sales=sales,
@@ -790,10 +979,11 @@ def coffee_sales():
 @admin_required
 def pastry_sales():
     owner_id = _current_owner_id()
-    sales_raw = list(db.collection('sales').where('productType', '==', 'Pastry').stream())
-    sales = sorted([d.to_dict() | {'id': d.id} for d in sales_raw],
-                   key=lambda s: s.get('date', ''), reverse=True)
-    sales = [s for s in sales if s.get('ownerId') == owner_id]
+    rows = query_all(
+        "SELECT * FROM sales WHERE owner_id = %s AND product_type = 'Pastry' ORDER BY date DESC",
+        (owner_id,),
+    )
+    sales = [dict(r) for r in rows]
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     return render_template('sales_pastry_content.html', sales=sales,
@@ -809,20 +999,16 @@ def pastry_sales():
 def out_of_stock():
     owner_id = _current_owner_id()
     category_filter = request.args.get('category', 'all')
+    rows = query_all(
+        "SELECT * FROM products WHERE owner_id = %s AND stock_quantity <= %s ORDER BY name",
+        (owner_id, LOW_STOCK_THRESHOLD),
+    )
     products = []
-    for d in db.collection('products').stream():
-        p = d.to_dict() | {'id': d.id}
-        if p.get('ownerId') != owner_id:
-            continue
-        stock_data = p.get('stock', {})
-        if isinstance(stock_data, dict):
-            qty = int(stock_data.get('quantity', 0))
-        else:
-            qty = int(stock_data) if stock_data is not None else 0
-        if qty <= LOW_STOCK_THRESHOLD:
-            p['stock'] = qty
-            if category_filter == 'all' or p.get('category') == category_filter:
-                products.append(p)
+    for r in rows:
+        p = dict(r)
+        p['stock'] = int(p.get('stock_quantity') or 0)
+        if category_filter == 'all' or p.get('category') == category_filter:
+            products.append(p)
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     return render_template('inventory_out_of_stock.html', products=products,
@@ -837,16 +1023,12 @@ def expiring_products():
     category_filter = request.args.get('category', 'all')
     owner_id = _current_owner_id()
     threshold = datetime.now() + timedelta(days=EXPIRING_DAYS)
-    products = []
-    for d in db.collection('products').where('ownerId', '==', owner_id).stream():
-        p = d.to_dict() | {'id': d.id}
-        exp = _to_naive(p.get('expirationDate'))
-        if exp and exp <= threshold:
-            stock_data = p.get('stock', {})
-            if isinstance(stock_data, dict):
-                p['stock'] = stock_data.get('quantity', 0)
-            if category_filter == 'all' or p.get('category') == category_filter:
-                products.append(p)
+    rows = query_all(
+        "SELECT * FROM products WHERE owner_id = %s AND expiration_date IS NOT NULL "
+        "AND expiration_date <= %s ORDER BY name",
+        (owner_id, threshold.date()),
+    )
+    products = [dict(r) for r in rows if category_filter == 'all' or r.get('category') == category_filter]
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     return render_template('inventory_expiring.html', products=products,
@@ -872,34 +1054,33 @@ def register_cashier():
             flash("Username, full name, and password are required", "error")
             return redirect(url_for('register_cashier'))
 
-        existing = list(db.collection('cashiers').where('username', '==', username).limit(1).stream())
+        existing = query_one(
+            "SELECT id FROM users WHERE username = %s LIMIT 1", (username,)
+        )
         if existing:
             flash("Username already exists", "error")
             return redirect(url_for('register_cashier'))
 
-        uid = username
-        password_hash = generate_password_hash(password)
-        db.collection('users').document(uid).set({
-            'uid': uid, 'username': username, 'displayName': display_name,
-            'role': 'cashier', 'status': 'active', 'createdAt': datetime.now(),
-            'ownerId': session.get('admin_id'),
-        })
-        db.collection('cashiers').document(uid).set({
-            'uid': uid, 'username': username, 'displayName': display_name,
-            'passwordHash': password_hash, 'status': 'active', 'createdAt': datetime.now(),
-            'ownerId': session.get('admin_id'),
-        })
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'), 'action': 'Register Cashier',
-            'timestamp': datetime.now(), 'details': f'Registered cashier: {username} ({display_name})',
-            'ownerId': session.get('admin_id'),
-        })
+        user = auth_service.create_user(
+            email=f"{username}@brewpos.local", password=password,
+            display_name=display_name, role='cashier',
+        )
+        if not user:
+            flash("Username already exists", "error")
+            return redirect(url_for('register_cashier'))
+        execute("UPDATE users SET username = %s, owner_id = %s WHERE id = %s",
+                (username, owner_id, user['id']))
+        _log_admin_activity('Register Cashier',
+                            f'Registered cashier: {username} ({display_name})')
         flash("Cashier registered successfully", "success")
         return redirect(url_for('register_cashier'))
 
-    cashiers = [d.to_dict() | {'uid': d.id} for d in
-                db.collection('cashiers').where('ownerId', '==', session.get('admin_id')).stream()]
-    return render_template('register_cashier.html', cashiers=cashiers,
+    cashiers = query_all(
+        "SELECT id AS uid, username, display_name, status, created_at FROM users "
+        "WHERE role = 'cashier' AND owner_id = %s ORDER BY display_name",
+        (owner_id,),
+    )
+    return render_template('register_cashier.html', cashiers=[dict(c) for c in cashiers],
                            low_stock_count=low_stock_count, expiring_count=expiring_count,
                            active_main='management', active_sub='register_cashier')
 
@@ -912,20 +1093,21 @@ def delete_cashier():
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     if request.method == 'POST':
         uid = request.form.get('uid')
-        doc = db.collection('cashiers').document(uid).get()
-        username = doc.to_dict().get('username', 'Unknown') if doc.exists else 'Unknown'
-        db.collection('cashiers').document(uid).delete()
-        db.collection('users').document(uid).update({'role': 'cashier_disabled', 'status': 'inactive'})
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'), 'action': 'Delete Cashier',
-            'timestamp': datetime.now(), 'details': f'Deleted cashier: {username}',
-            'ownerId': session.get('admin_id'),
-        })
+        user = auth_service.get_user_by_id(uid)
+        username = user.get('username', 'Unknown') if user else 'Unknown'
+        execute(
+            "UPDATE users SET status = 'inactive', role = 'cashier_disabled' "
+            "WHERE id = %s AND owner_id = %s", (uid, owner_id)
+        )
+        _log_admin_activity('Delete Cashier', f'Deleted cashier: {username}')
         flash("Cashier deleted successfully", "success")
 
-    cashiers = [d.to_dict() | {'uid': d.id} for d in
-                db.collection('cashiers').where('ownerId', '==', session.get('admin_id')).stream()]
-    return render_template('delete_cashier.html', cashiers=cashiers,
+    cashiers = query_all(
+        "SELECT id AS uid, username, display_name, status, created_at FROM users "
+        "WHERE role = 'cashier' AND owner_id = %s ORDER BY display_name",
+        (owner_id,),
+    )
+    return render_template('delete_cashier.html', cashiers=[dict(c) for c in cashiers],
                            low_stock_count=low_stock_count, expiring_count=expiring_count,
                            active_main='management', active_sub='delete_cashier')
 
@@ -937,17 +1119,11 @@ def edit_cashier():
     username = clean_input(request.form.get('username'))
     display_name = clean_input(request.form.get('display_name'))
     status = request.form.get('status')
-    db.collection('cashiers').document(uid).update({
-        'username': username, 'displayName': display_name, 'status': status,
-    })
-    db.collection('users').document(uid).update({
-        'username': username, 'displayName': display_name, 'status': status,
-    })
-    db.collection('admin_activity').add({
-        'adminId': session.get('admin_id'), 'action': 'Update Cashier',
-        'timestamp': datetime.now(), 'details': f'Updated cashier: {username}',
-        'ownerId': session.get('admin_id'),
-    })
+    execute(
+        "UPDATE users SET username = %s, display_name = %s, status = %s WHERE id = %s",
+        (username, display_name, status, uid),
+    )
+    _log_admin_activity('Update Cashier', f'Updated cashier: {username}')
     flash("Cashier updated successfully!", "success")
     return redirect(url_for('delete_cashier'))
 
@@ -959,12 +1135,7 @@ def change_admin_password():
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     if request.method == 'POST':
-        # Google-auth only: here we just record a security settings change.
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'), 'action': 'Security Settings Update',
-            'timestamp': datetime.now(), 'details': 'Admin updated security settings',
-            'ownerId': session.get('admin_id'),
-        })
+        _log_admin_activity('Security Settings Update', 'Admin updated security settings')
         flash("Security settings updated successfully", "success")
         return redirect(url_for('change_admin_password'))
     return render_template('change_admin_password.html',
@@ -987,11 +1158,25 @@ def receipt_customization():
             'contact': clean_input(request.form.get('contact')),
             'footer': clean_input(request.form.get('footer')) or DEFAULT_STORE_SETTINGS['footer'],
         }
-        db.collection('store_settings').document(f'config_{owner_id}').set(settings)
+        doc_id = f'config_{owner_id}'
+        row = query_one("SELECT id FROM store_settings WHERE id = %s", (doc_id,))
+        if row:
+            execute(
+                "UPDATE store_settings SET store_name = %s, subtitle = %s, address = %s, "
+                "contact = %s, footer = %s, updated_at = %s WHERE id = %s",
+                (settings['storeName'], settings['subtitle'], settings['address'],
+                 settings['contact'], settings['footer'], datetime.now(), doc_id),
+            )
+        else:
+            execute(
+                "INSERT INTO store_settings (id, store_name, subtitle, address, contact, footer, owner_id, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (doc_id, settings['storeName'], settings['subtitle'], settings['address'],
+                 settings['contact'], settings['footer'], owner_id, datetime.now()),
+            )
         flash("Receipt settings saved successfully!", "success")
 
-    settings_doc = db.collection('store_settings').document(f'config_{owner_id}').get()
-    settings = settings_doc.to_dict() if settings_doc.exists else DEFAULT_STORE_SETTINGS
+    settings = get_store_settings(owner_id=owner_id)
     low_stock_count = product_repository.count_low_stock(owner_id=owner_id)
     expiring_count = product_repository.count_expiring(EXPIRING_DAYS, owner_id=owner_id)
     return render_template('receipt_customization.html', settings=settings,
@@ -999,14 +1184,8 @@ def receipt_customization():
                            active_main='management', active_sub='receipt_customization')
 
 
-def get_store_settings(owner_id: Optional[str] = None):
-    doc_id = f'config_{owner_id}' if owner_id else 'config'
-    doc = db.collection('store_settings').document(doc_id).get()
-    return doc.to_dict() if doc.exists else DEFAULT_STORE_SETTINGS
-
-
 # ---------------------------------------------------------------
-# Backup / Restore (Firestore export info)
+# Backup / Restore
 # ---------------------------------------------------------------
 @app.route('/backup_restore')
 @admin_required
@@ -1017,7 +1196,13 @@ def backup_restore():
     return render_template('backup_restore.html',
                            low_stock_count=low_stock_count, expiring_count=expiring_count,
                            active_main='management', active_sub='backup_restore',
-                           project_id=FIREBASE_WEB_CONFIG.get('projectId', ''))
+                           project_id='brewpos-postgres')
+
+
+def _row_default(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
 
 
 @app.route('/backup_database', methods=['POST'])
@@ -1025,22 +1210,23 @@ def backup_restore():
 def backup_database():
     owner_id = _current_owner_id()
     export = {}
-    for col in ['products', 'sales', 'stock_movements', 'cashiers', 'users']:
-        export[col] = [d.to_dict() | {'__id': d.id} for d in
-                       db.collection(col).where('ownerId', '==', owner_id).stream()]
-    for col in ['categories', 'store_settings']:
-        export[col] = [d.to_dict() | {'__id': d.id} for d in db.collection(col).stream()]
+    owner_tables = ['users', 'products', 'sales', 'stock_movements',
+                    'store_settings', 'admin_activity', 'cashier_activity']
+    for col in owner_tables:
+        export[col] = [dict(r) for r in
+                       query_all(f"SELECT * FROM {col} WHERE owner_id = %s ORDER BY id", (owner_id,))]
+    # Tables without an owner_id column
+    export['categories'] = [dict(r) for r in query_all("SELECT * FROM categories ORDER BY id")]
+    export['sale_items'] = [dict(r) for r in
+                            query_all("SELECT si.* FROM sale_items si "
+                                      "JOIN sales s ON si.sale_id = s.id "
+                                      "WHERE s.owner_id = %s ORDER BY si.id", (owner_id,))]
     mem = BytesIO()
-    mem.write(json.dumps(export, default=str, indent=2).encode('utf-8'))
+    mem.write(json.dumps(export, default=_row_default, indent=2).encode('utf-8'))
     mem.seek(0)
-    try:
-        return send_file(mem, as_attachment=True,
-                         download_name=f"brewpos_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                         mimetype='application/json')
-    except TypeError:
-        return send_file(mem, as_attachment=True,
-                         attachment_filename=f"brewpos_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                         mimetype='application/json')
+    return send_file(mem, as_attachment=True,
+                     download_name=f"brewpos_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                     mimetype='application/json')
 
 
 @app.route('/restore_database', methods=['POST'])
@@ -1056,15 +1242,37 @@ def restore_database():
     try:
         data = json.loads(f.read().decode('utf-8'))
         owner_id = _current_owner_id()
+        allowed_cols = [
+            'users', 'categories', 'products', 'sale_items', 'sales',
+            'stock_movements', 'store_settings', 'admin_activity', 'cashier_activity',
+        ]
+        owner_tables = ['users', 'products', 'sales', 'stock_movements',
+                        'store_settings', 'admin_activity', 'cashier_activity']
+        # Tables with SERIAL primary keys - do not insert id, let DB auto-generate
+        serial_tables = {'categories', 'sale_items', 'stock_movements', 'admin_activity', 'cashier_activity'}
         for col, rows in data.items():
+            if col not in allowed_cols:
+                continue
             for row in rows:
-                doc_id = row.pop('__id', None)
-                if col in ['products', 'sales', 'stock_movements', 'cashiers', 'users']:
-                    row['ownerId'] = owner_id
-                if doc_id:
-                    db.collection(col).document(doc_id).set(row)
-                else:
-                    db.collection(col).add(row)
+                row = dict(row)
+                if col in owner_tables:
+                    row['owner_id'] = owner_id
+                if col == 'users':
+                    row.pop('password_hash', None)
+                # For SERIAL tables, let the database auto-generate the id
+                if col in serial_tables:
+                    row.pop('id', None)
+                # Ensure every row has an id (primary key) for non-SERIAL tables
+                elif not row.get('id'):
+                    row['id'] = str(uuid.uuid4())
+                columns = list(row.keys())
+                placeholders = ", ".join(["%s"] * len(columns))
+                col_list = ", ".join(columns)
+                execute(
+                    f"INSERT INTO {col} ({col_list}) VALUES ({placeholders}) "
+                    f"ON CONFLICT (id) DO NOTHING",
+                    [row[c] for c in columns],
+                )
         flash("Backup restored successfully!", "success")
     except Exception as e:
         flash(f"Restore error: {e}", "error")
@@ -1081,17 +1289,19 @@ def cashier_dashboard():
     owner_id = _current_owner_id()
     today = datetime.now().date()
     today_start = datetime(today.year, today.month, today.day)
-    sales = list(db.collection('sales').where('cashierId', '==', cid).stream())
-    sales = [s for s in sales if s.to_dict().get('ownerId') == owner_id]
-    today_total = sum(float(s.to_dict().get('total', 0)) for s in sales
-                      if _to_naive(s.to_dict().get('date')) >= today_start)
+    rows = query_all(
+        "SELECT * FROM sales WHERE cashier_id = %s AND owner_id = %s ORDER BY date DESC",
+        (cid, owner_id),
+    )
+    sales = [dict(r) for r in rows]
+    today_total = sum(float(s.get('total', 0)) for s in sales
+                      if _to_naive(s.get('date')) >= today_start)
     today_count = sum(1 for s in sales
-                      if _to_naive(s.to_dict().get('date')) >= today_start)
+                      if _to_naive(s.get('date')) >= today_start)
 
-    recent = sorted(sales, key=lambda s: _to_naive(s.to_dict().get('date')), reverse=True)[:5]
-    recent_sales = [s.to_dict() | {'id': s.id} for s in recent]
+    recent = sorted(sales, key=lambda s: _to_naive(s.get('date')), reverse=True)[:5]
+    recent_sales = [dict(s, id=s.get('id')) for s in recent]
 
-    owner_id = _current_owner_id()
     settings = get_store_settings(owner_id=owner_id)
     return render_template('cashier_dashboard.html', recent_sales=recent_sales,
                            today_total=today_total, today_count=today_count,
@@ -1109,16 +1319,21 @@ def cashier_history():
     chart_sales = []
     chart_transactions = []
     labels = [today.strftime('%m-%d')]
-    for s in db.collection('sales').where('cashierId', '==', cid).stream():
-        sdoc = s.to_dict()
-        if sdoc.get('ownerId') != owner_id:
-            continue
+    rows = query_all(
+        "SELECT * FROM sales WHERE cashier_id = %s AND owner_id = %s ORDER BY date DESC",
+        (cid, owner_id),
+    )
+    for srow in rows:
+        sdoc = dict(srow)
         dt = _to_naive(sdoc.get('date'))
         if dt < today_start:
             continue
-        items = [it.to_dict() for it in s.reference.collection('items').stream()]
+        item_rows = query_all(
+            "SELECT * FROM sale_items WHERE sale_id = %s", (sdoc['id'],),
+        )
+        items = [dict(it) for it in item_rows]
         sales_data.append({
-            'id': s.id, 'receipt_number': sdoc.get('receiptNo'),
+            'id': sdoc['id'], 'receipt_number': sdoc.get('receipt_no'),
             'total_amount': float(sdoc.get('total', 0)), 'sale_date': dt, 'items': items,
         })
         chart_sales.append(float(sdoc.get('total', 0)))
@@ -1185,24 +1400,21 @@ def api_update_product():
     data = request.get_json() or {}
     product_id = data.get('id')
     owner_id = _current_owner_id()
-    doc = db.collection('products').document(product_id).get()
-    if not doc.exists or doc.to_dict().get('ownerId') != owner_id:
+    product = product_repository.find_by_id(product_id, owner_id=owner_id)
+    if not product:
         return jsonify({'success': False, 'message': 'Product not found'}), 404
     update_data = {
         'name': clean_input(data.get('name')),
         'barcode': clean_input(data.get('barcode')),
         'category': clean_input(data.get('category')),
         'price': float(data.get('price', 0)),
-        'stock': {'quantity': int(data.get('stock', 0)), 'minimum': int(data.get('stockMinimum', 0))},
-        'expirationDate': data.get('expirationDate'),
-        'updatedAt': datetime.now(),
+        'stock_quantity': int(data.get('stock', 0)),
+        'stock_minimum': int(data.get('stockMinimum', 0)),
+        'expiration_date': data.get('expirationDate'),
+        'updated_at': datetime.now(),
     }
     product_repository.update(product_id, update_data)
-    db.collection('admin_activity').add({
-        'adminId': session.get('admin_id'), 'action': 'Edit Product',
-        'timestamp': datetime.now(), 'details': f"Edited product: {update_data['name']}",
-        'ownerId': session.get('admin_id'),
-    })
+    _log_admin_activity('Edit Product', f"Edited product: {update_data['name']}")
     return jsonify({'success': True, 'message': 'Product updated successfully!'})
 
 
@@ -1272,7 +1484,6 @@ def complete_sale():
     if not items:
         return jsonify({'success': False, 'message': 'No items in cart'})
 
-    # Validate cup-size pricing + totals client-independent
     total_amount = 0.0
     for item in items:
         try:
@@ -1328,25 +1539,17 @@ def api_cancel_pending_sale():
 @app.route('/admin_logout')
 def admin_logout():
     if session.get('role') == 'admin':
-        db.collection('admin_activity').add({
-            'adminId': session.get('admin_id'), 'action': 'Admin Logout',
-            'timestamp': datetime.now(),
-            'ownerId': session.get('admin_id'),
-        })
+        _log_admin_activity('Admin Logout', 'Admin logged out')
     session.clear()
-    return redirect(url_for('google_login'))
+    return redirect(url_for('login'))
 
 
 @app.route('/cashier_logout')
 def cashier_logout():
     if session.get('role') == 'cashier':
-        db.collection('cashier_activity').add({
-            'cashierId': session.get('cashier_id'), 'action': 'Logout',
-            'timestamp': datetime.now(),
-            'ownerId': session.get('admin_id'),
-        })
+        _log_cashier_activity('Logout', 'Cashier logged out')
     session.clear()
-    return redirect(url_for('google_login'))
+    return redirect(url_for('login'))
 
 
 @app.route('/logout')
@@ -1356,7 +1559,9 @@ def logout():
     session.pop('admin_id', None)
     session.pop('cashier_user', None)
     session.pop('cashier_id', None)
-    return redirect(url_for('select_role'))
+    session.pop('user_email', None)
+    session.pop('user_display_name', None)
+    return redirect(url_for('login'))
 
 
 # ---------------------------------------------------------------
@@ -1368,15 +1573,4 @@ def product_image(filename):
 
 
 if __name__ == '__main__':
-    # Seed default categories if missing
-    try:
-        for cat in DEFAULT_CATEGORIES:
-            existing = list(db.collection('categories').where('name', '==', cat).limit(1).stream())
-            if not existing:
-                db.collection('categories').add({'name': cat, 'createdAt': datetime.now()})
-        # Seed default store settings if missing
-        if not db.collection('store_settings').document('config').get().exists:
-            db.collection('store_settings').document('config').set(DEFAULT_STORE_SETTINGS)
-    except Exception as e:
-        print(f"Seed error: {e}")
     app.run(debug=True, host='0.0.0.0', port=5000)

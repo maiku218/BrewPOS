@@ -12,6 +12,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
+import uuid
 
 
 # ================================================
@@ -357,9 +358,9 @@ class Cashier(User):
 class StockMovementProcessor:
     """Abstract processor. Subclasses implement process()."""
 
-    def __init__(self, movement: StockMovement, db):
+    def __init__(self, movement: StockMovement, repo):
         self.movement = movement
-        self.db = db
+        self.repo = repo
 
     def process(self, product: Product):
         raise NotImplementedError
@@ -371,10 +372,25 @@ class StockInProcessor(StockMovementProcessor):
         self._record(product)
 
     def _record(self, product: Product):
-        self.db.collection('products').document(product.id).update({
-            'stock': {'quantity': product.stock_quantity, 'minimum': product.stock_minimum}
+        self.repo.update(product.id, {
+            'stock_quantity': product.stock_quantity,
+            'stock_minimum': product.stock_minimum,
+            'updated_at': datetime.now(),
         })
-        self.db.collection('stock_movements').add(self.movement.to_dict())
+        from db import execute
+        execute(
+            "INSERT INTO stock_movements (product_id, movement_type, quantity, reason, timestamp, owner_id, receipt_no) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                product.id,
+                self.movement.movement_type,
+                self.movement.quantity,
+                self.movement.reason,
+                self.movement.timestamp,
+                product.owner_id,
+                None,
+            ),
+        )
 
 
 class StockOutProcessor(StockMovementProcessor):
@@ -383,16 +399,31 @@ class StockOutProcessor(StockMovementProcessor):
         self._record(product)
 
     def _record(self, product: Product):
-        self.db.collection('products').document(product.id).update({
-            'stock': {'quantity': product.stock_quantity, 'minimum': product.stock_minimum}
+        self.repo.update(product.id, {
+            'stock_quantity': product.stock_quantity,
+            'stock_minimum': product.stock_minimum,
+            'updated_at': datetime.now(),
         })
-        self.db.collection('stock_movements').add(self.movement.to_dict())
+        from db import execute
+        execute(
+            "INSERT INTO stock_movements (product_id, movement_type, quantity, reason, timestamp, owner_id, receipt_no) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                product.id,
+                self.movement.movement_type,
+                self.movement.quantity,
+                self.movement.reason,
+                self.movement.timestamp,
+                product.owner_id,
+                None,
+            ),
+        )
 
 
-def get_movement_processor(movement: StockMovement, db) -> StockMovementProcessor:
+def get_movement_processor(movement: StockMovement, repo) -> StockMovementProcessor:
     """Factory returning the correct polymorphic processor."""
     if movement.is_inbound():
-        return StockInProcessor(movement, db)
+        return StockInProcessor(movement, repo)
     elif movement.is_outbound():
-        return StockOutProcessor(movement, db)
+        return StockOutProcessor(movement, repo)
     raise ValueError(f"Unknown movement type: {movement.movement_type}")

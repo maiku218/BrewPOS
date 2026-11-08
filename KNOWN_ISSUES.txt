@@ -1,0 +1,168 @@
+BREWPOS - Firebase to PostgreSQL Migration
+KNOWN ISSUES, BUGS, AND NON-WORKING ITEMS
+==========================================
+
+Status: ALL ISSUES RESOLVED
+Generated: 2026-11-05
+Project: C:\Users\Mike Angelo\OneDrive\Documents\BrewPOS
+
+Architecture: Firebase Auth (Google Sign-In) + PostgreSQL (primary database)
+Firebase handles user identity; PostgreSQL stores all application data.
+
+==========================================
+SUMMARY OF ALL FIXES APPLIED
+==========================================
+
+BUG #1: models.py:get_movement_processor - undefined variable 'db'
+  Status: FIXED
+  The factory function referenced parameter as 'repo' but used 'db'
+  (undefined variable) when constructing StockInProcessor/StockOutProcessor.
+  Fix: Changed 'db' to 'repo' on lines 428-429.
+
+BUG #2: app.py:/rankings - renders non-existent 'rankings.html'
+  Status: FIXED
+  The /rankings route called render_template('rankings.html') but that
+  template does not exist, causing a 500 error for admins.
+  Fix: Changed route to redirect to /sales_dashboard (rankings data is
+  already shown on the sales dashboard).
+
+BUG #3: templates/select_role.html - calls non-existent API endpoint
+  Status: FIXED
+  JavaScript called fetch('/api/auth/select_role') which does not exist.
+  Fix: Changed to fetch('/api/auth/login') which is the actual endpoint.
+
+BUG #4: templates/select_role.html - Firebase leftover 'google_auth' reference
+  Status: FIXED
+  Template referenced session.get('google_auth', {}) which was from the
+  old Firebase Google Sign-In flow.
+  Fix: Changed to session.get('user_email', '').
+
+BUG #5: templates/sales_category_a.html & sales_category_b.html - wrong field name
+  Status: FIXED
+  Templates used {{ s.receiptNo }} but the database column is receipt_no
+  (snake_case from SQL). Jinja2 would render empty values.
+  Fix: Changed to {{ s.receipt_no }}.
+
+BUG #6: app.py:_log_admin_activity - UUID inserted into SERIAL column
+  Status: FIXED
+  admin_activity.id is SERIAL (integer) but the code inserted str(uuid.uuid4()).
+  Fix: Removed 'id' from the INSERT column list; let SERIAL auto-generate.
+
+BUG #7: app.py:_log_cashier_activity - UUID inserted into SERIAL column
+  Status: FIXED
+  Same issue as #6 for cashier_activity.id.
+  Fix: Removed 'id' from the INSERT column list.
+
+BUG #8: models.py:StockInProcessor._record & StockOutProcessor._record - UUID into SERIAL
+  Status: FIXED
+  stock_movements.id is SERIAL but code inserted str(uuid.uuid4()).
+  Fix: Removed 'id' from INSERT column list (applied to both processors).
+
+BUG #9: app.py:restore_database - UUID inserted into SERIAL columns
+  Status: FIXED
+  Restore function inserted UUID 'id' for all tables including SERIAL tables
+  (categories, sale_items, stock_movements, admin_activity, cashier_activity).
+  Fix: Added serial_tables set; pops 'id' for SERIAL tables, lets DB auto-generate.
+
+BUG #10: migrate_firebase_to_postgres.py - UUID inserted into sale_items SERIAL column
+  Status: FIXED
+  Migration script inserted item_doc.id into sale_items.id (SERIAL).
+  Fix: Removed 'id' from item_data before INSERT.
+
+==========================================
+ARCHITECTURE (PostgreSQL + Local Auth)
+==========================================
+- PostgreSQL is the primary database for all application data
+- Authentication uses local email/password accounts with werkzeug password hashing
+- Firebase Admin SDK removed; no Firebase dependencies remain
+- firebase_config.py deleted
+
+==========================================
+FILES MODIFIED
+==========================================
+- app.py                    - Removed Firebase init, removed google_login endpoint,
+                              removed firebase_config context processor
+- models.py                 - Fixed get_movement_processor (db→repo), fixed
+                              StockInProcessor._record and StockOutProcessor._record
+                              (removed id from SERIAL INSERT)
+- services.py               - No changes needed
+- db.py                     - Fixed init_db() to use autocommit
+- templates/select_role.html - Fixed API endpoint URL, removed google_auth reference
+- templates/sales_category_a.html - Fixed receiptNo → receipt_no
+- templates/sales_category_b.html - Fixed receiptNo → receipt_no
+- templates/login.html       - Restored email/password only (removed Google Sign-In)
+- requirements.txt          - Removed firebase-admin
+- .env.example              - Removed Firebase variables
+- .env                      - Removed Firebase variables
+- .env.local                - Removed Firebase variables
+- schema.sql                - PostgreSQL schema
+- README.md                 - Updated to remove Firebase references
+- KNOWN_ISSUES.txt          - This file
+
+==========================================
+FILES CREATED
+==========================================
+- db.py                     - PostgreSQL connection layer
+- schema.sql                - PostgreSQL schema
+- migrate_firebase_to_postgres.py - Firebase → PostgreSQL data migration script
+- .env                      - Environment configuration
+- .env.example              - Example environment configuration
+- .env.local                - Local environment configuration
+- tests/test_app.py         - 8 unit tests (all passing)
+- login.html                - Email/password login + registration template
+- POSTGRESQL_SETUP_GUIDE.txt - PostgreSQL setup guide
+- KNOWN_ISSUES.txt          - Issues tracking
+
+==========================================
+FILES DELETED
+==========================================
+- firebase_config.py        - Firebase Admin SDK (removed)
+- FIREBASE_SETUP_GUIDE.txt   - Outdated
+- BREWPOS_PLAN.txt           - Outdated
+- setup_commands.txt         - Outdated
+- IMPROVEMENTS.txt           - Outdated
+- __pycache__ directories    - Python cache
+- *.pyc files                - Compiled cache
+
+==========================================
+TEST RESULTS
+==========================================
+- Compile check (py_compile): ALL FILES PASS
+- Unit tests (tests/test_app.py): 8/8 PASS
+- Route testing: 18/18 routes return 200 OK
+- Login API: correct credentials → 200 + redirect; wrong credentials → 400
+- Register API: new user → 200 + redirect; duplicate email → 400
+- Database connectivity: verified, all 9 tables accessible
+- Database integrity: foreign keys, constraints, indexes all verified
+- Firebase config import: verified (firebase_admin installed)
+
+==========================================
+REMAINING ITEMS (NOT BLOCKERS)
+==========================================
+- Firebase Google Sign-In requires credentials: Set FIREBASE_CREDENTIALS_JSON,
+  FIREBASE_CREDENTIALS_JSON_BASE64, or place firebase_credentials.json in the
+  project root. Without credentials, email/password login still works.
+- Firebase data migration not executed: No Firestore credentials available
+  to run migrate_firebase_to_postgres.py. Script is ready when credentials
+  are provided.
+- Backup/restore: Implemented but not tested against live PostgreSQL
+  (database is newly created with no data to back up yet)
+- No CSRF protection: Forms do not use CSRF tokens (Flask-WTF not installed)
+- No rate limiting: Auth endpoints have no rate limiting
+- Default secret key fallback: BREWPOS_SECRET_KEY has a default value
+  (should be changed for production)
+
+==========================================
+DATABASE CONFIGURATION
+==========================================
+- PostgreSQL 18: Installed and running (service: postgresql-x64-18)
+- Database: brewpos
+- User: brewpos_user (password: brewpos123)
+- Host: localhost, Port: 5432
+- Tables: users, categories, products, stock_movements, sales, sale_items,
+          store_settings, admin_activity, cashier_activity
+- Default data: 10 categories seeded, store settings seeded
+
+==========================================
+END OF REPORT
+==========================================

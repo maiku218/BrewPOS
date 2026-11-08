@@ -1,0 +1,229 @@
+BREWPOS - PostgreSQL Setup & Connection Guide
+=============================================
+Step-by-step instructions to install, configure, and connect PostgreSQL
+to the BrewPOS Flask application on Windows.
+
+Project: C:\Users\Mike Angelo\OneDrive\Documents\BrewPOS
+
+=============================================
+CURRENT STATUS: ALREADY CONFIGURED
+=============================================
+
+PostgreSQL 18 is installed and running on this system. The BrewPOS database
+is already configured and the app is working. Current configuration:
+
+  Database:   brewpos
+  User:       brewpos_user
+  Password:   brewpos123
+  Host:       localhost
+  Port:       5432
+
+To start the app:
+  cd C:\Users\Mike Angelo\OneDrive\Documents\BrewPOS
+  python app.py
+
+Then open http://localhost:5000 in your browser.
+
+=============================================
+STEP 1: IF YOU NEED TO RE-INSTALL POSTGRESQL
+=============================================
+
+1. Download the PostgreSQL installer for Windows:
+   https://www.postgresql.org/download/windows/
+
+2. Run the installer and follow the prompts:
+   - Choose an installation directory (default is fine).
+   - Select components: PostgreSQL Server, pgAdmin (optional), command line tools.
+   - Set a password for the `postgres` superuser (remember this — you will need it).
+   - Choose the port (default: 5432).
+   - Choose the locale (default is fine).
+   - Finish the installation.
+
+3. Verify PostgreSQL is running:
+   - Open Command Prompt or PowerShell.
+   - Run:  pg_isready
+   - Expected output:  accepting connections
+
+   If pg_isready is not recognized, add PostgreSQL's bin folder to your PATH:
+   C:\Program Files\PostgreSQL\<version>\bin
+
+   Example (adjust version number):
+   setx PATH "%PATH%;C:\Program Files\PostgreSQL\16\bin"
+
+=============================================
+STEP 2: CREATE DATABASE AND USER
+=============================================
+
+Open a terminal as the postgres user or connect via psql:
+
+Option A — Using psql (Command Prompt / PowerShell):
+  psql -U postgres
+
+  When prompted, enter the `postgres` superuser password you set during install.
+
+Once inside the psql prompt, run:
+
+  CREATE DATABASE brewpos;
+  CREATE USER brewpos_user WITH PASSWORD 'your_password_here';
+  GRANT ALL PRIVILEGES ON DATABASE brewpos TO brewpos_user;
+
+  \q   (to quit psql)
+
+Option B — Using pgAdmin (GUI):
+  1. Open pgAdmin 4.
+  2. Connect to the server using the `postgres` password.
+  3. Right-click Databases → Create → Database → name it `brewpos`.
+  4. Right-click Login/Group Roles → Create → Login/Group Role:
+     - Role name: brewpos_user
+     - Password: your_password_here
+  5. Grant privileges on the brewpos database to brewpos_user.
+
+=============================================
+STEP 3: CONFIGURE ENVIRONMENT VARIABLES
+=============================================
+
+In the BrewPOS project folder, copy the example env file:
+
+  copy .env.example .env
+
+Open `.env` in a text editor and set your PostgreSQL credentials:
+
+  DB_HOST=localhost
+  DB_PORT=5432
+  DB_NAME=brewpos
+  DB_USER=brewpos_user
+  DB_PASSWORD=your_password_here
+
+Also set:
+
+  BREWPOS_SECRET_KEY=change_this_to_a_random_secret
+  LOW_STOCK_THRESHOLD=10
+  EXPIRING_DAYS=7
+
+Save the file. Do NOT commit `.env` to version control (it is already in .gitignore).
+
+=============================================
+STEP 4: LOAD THE DATABASE SCHEMA
+=============================================
+
+Option A — Let the app initialize automatically:
+  Just run `python app.py`. The app calls `init_db()` on startup, which
+  creates all tables, indexes, and seeds default categories and store settings
+  if they do not already exist.
+
+Option B — Load manually with psql (recommended first time):
+  psql -U brewpos_user -d brewpos -f schema.sql
+
+  Enter the password for brewpos_user when prompted.
+
+Option C — Load manually as postgres:
+  psql -U postgres -d brewpos -f schema.sql
+
+=============================================
+STEP 5: INSTALL PYTHON DEPENDENCIES
+=============================================
+
+In the BrewPOS project folder:
+
+  pip install -r requirements.txt
+
+This installs Flask, psycopg2-binary (PostgreSQL driver), python-dotenv,
+and gunicorn.
+
+Verify psycopg2 is installed:
+  python -c "import psycopg2; print('psycopg2 OK')"
+
+=============================================
+STEP 6: RUN THE APPLICATION
+=============================================
+
+  python app.py
+
+Expected output:
+  [BREWPOS] PostgreSQL schema initialized.
+  * Serving Flask app 'app'
+  * Running on http://127.0.0.1:5000
+
+Open your browser to: http://localhost:5000
+
+If you see a warning like:
+  [BREWPOS] WARNING: Could not initialize PostgreSQL schema: ...
+then PostgreSQL is not running or your `.env` credentials are wrong.
+Go back to Step 2–4 and verify the connection.
+
+=============================================
+STEP 7: VERIFY THE CONNECTION
+=============================================
+
+Run a quick connection test:
+
+  python -c "
+  from db import get_connection, init_db
+  conn = get_connection()
+  cur = conn.cursor()
+  cur.execute('SELECT COUNT(*) FROM users')
+  print('Connected! Users table count:', cur.fetchone()[0])
+  cur.close()
+  conn.close()
+  "
+
+Or simply register your first account at http://localhost:5000 — the first
+registered account becomes the admin.
+
+=============================================
+STEP 8: MIGRATE DATA FROM FIREBASE (OPTIONAL)
+=============================================
+
+If you have existing Firebase data to import:
+
+1. Obtain your Firebase service-account key JSON.
+2. Set one of these environment variables:
+     FIREBASE_CREDENTIALS_JSON      (raw JSON)
+     FIREBASE_CREDENTIALS_JSON_BASE64 (base64-encoded JSON)
+   Or place firebase_credentials.json in the project root.
+3. Run:
+     python migrate_firebase_to_postgres.py
+
+This reads Firestore (read-only) and writes into PostgreSQL without
+duplicating existing rows (ON CONFLICT DO NOTHING).
+
+=============================================
+TROUBLESHOOTING
+=============================================
+
+Problem: "fe_sendauth: no password supplied" or authentication failed
+  Fix: Check DB_USER and DB_PASSWORD in .env match the PostgreSQL user
+  you created. Make sure the .env file exists in the project root.
+
+Problem: "could not connect to server: Connection refused"
+  Fix: PostgreSQL is not running. Start it:
+       - Via Services: find "postgresql-x64-<version>" and start it.
+       - Or: pg_ctl -D "C:\Program Files\PostgreSQL\<version>\data" start
+
+Problem: "permission denied for database brewpos"
+  Fix: Run GRANT ALL PRIVILEGES ON DATABASE brewpos TO brewpos_user;
+
+Problem: psql command not found
+  Fix: Add PostgreSQL bin folder to PATH:
+       setx PATH "%PATH%;C:\Program Files\PostgreSQL\<version>\bin"
+       Then restart your terminal.
+
+Problem: Port 5432 already in use
+  Fix: Change DB_PORT in .env and reconfigure PostgreSQL to listen on that port,
+       or free up port 5432.
+
+=============================================
+FILES INVOLVED
+=============================================
+
+  .env.example        - Example environment config (copy to .env)
+  .env                - Your actual environment config (not committed)
+  schema.sql          - PostgreSQL schema (tables, indexes, constraints)
+  db.py               - PostgreSQL connection layer
+  app.py              - Flask application (calls init_db() on startup)
+  migrate_firebase_to_postgres.py - Firebase → PostgreSQL migration script
+  requirements.txt    - Python dependencies (includes psycopg2-binary)
+
+=============================================
+END OF GUIDE
+=============================================

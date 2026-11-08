@@ -157,7 +157,7 @@
     </div>
 
     <script>
-        document.getElementById('user-email').textContent = '{{ session.get("google_auth", {}).get("email", "") }}';
+        document.getElementById('user-email').textContent = '{{ session.get("user_email", "") }}';
 
         function openModal(role) {
             document.getElementById(role + '-modal').classList.add('show');
@@ -186,7 +186,7 @@
                 payload.username = document.getElementById('cashier-username').value;
                 payload.password = document.getElementById('cashier-password').value;
             }
-            const resp = await fetch('/api/auth/select_role', {
+            const resp = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),

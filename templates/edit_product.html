@@ -81,7 +81,7 @@
         <div class="page-title">Edit Product</div>
         <div class="page-sub">{{ product.name }}</div>
         <div class="panel">
-            <form method="POST" id="editProductForm">
+            <form method="POST" id="editProductForm" enctype="multipart/form-data">
                 <script>
                     document.querySelectorAll('#editProductForm input[type="checkbox"][name="addons"]').forEach(cb => {
                         const priceInput = document.querySelector(`#editProductForm input[name="addon_price[]"][value="${cb.value}"]`);
@@ -109,6 +109,8 @@
                       <div class="full">
                           <label>Image URL</label>
                           <input type="url" name="image_url" value="{{ product.imageUrl or '' }}" placeholder="https://example.com/image.jpg">
+                          <label style="font-size:12px;margin-top:6px;display:block;">Or Upload New Image</label>
+                          <input type="file" name="product_image" id="productImageInput" accept="image/png,image/jpeg,image/webp,image/jpg" style="margin-top:6px;">
                           {% if product.imageUrl %}
                           <div class="current-img"><img src="{{ product.imageUrl }}" alt="Current image"></div>
                           {% endif %}

@@ -99,7 +99,7 @@
             {% endfor %}
         {% endwith %}
         <div class="panel">
-            <form method="POST" id="addProductForm">
+            <form method="POST" id="addProductForm" enctype="multipart/form-data">
                 <div class="form-grid">
                     <div class="full">
                         <label>Category *</label>
@@ -111,6 +111,10 @@
                     <div class="full">
                         <label>Product Image URL</label>
                         <input type="url" name="image_url" placeholder="https://example.com/image.jpg" id="imageUrlInput">
+                    </div>
+                    <div class="full">
+                        <label>Or Upload Product Image</label>
+                        <input type="file" name="product_image" id="productImageInput" accept="image/png,image/jpeg,image/webp,image/jpg">
                     </div>
                     <div>
                         <label>Product Name *</label>
